@@ -85,6 +85,9 @@ CODE_DIGITS = 4
 #: A send that cannot finish in this time drops the connection: a peer that
 #: stops reading must not hold up the game for everyone else.
 SEND_TIMEOUT_S = 10.0
+#: How often a waiting read checks whether its own side closed the
+#: connection (see _Connection.receive).
+READ_POLL_S = 0.25
 #: Messages a connection may send at once, and how fast that refills. Far
 #: above human play and chat; a flood beyond it disconnects the sender.
 PEER_BURST = 60
@@ -211,18 +214,30 @@ class _Connection:
             return False
 
     def receive(self) -> "dict | None":
-        """Next message, or None when the peer closed the connection.
-        Raises socket.timeout when a read timeout is set and passes."""
+        """Next message, or None when the peer closed the connection or
+        close() was called. Raises socket.timeout when a read timeout is set
+        and passes.
+
+        The wait is sliced into READ_POLL_S steps that check `closed`:
+        macOS does not reliably wake a thread blocked on a socket when
+        another thread shuts it down and closes it, so without the check a
+        local close() went unnoticed until the socket's own timeout."""
         deadline = (None if self._read_timeout is None
                     else time.monotonic() + self._read_timeout)
         while b"\n" not in self._buffer:
             if len(self._buffer) > MAX_MESSAGE_BYTES:
                 raise ProtocolError("message too large")
+            if self.closed:
+                return None
             try:
+                wait = READ_POLL_S
                 if deadline is not None:
                     remaining = deadline - time.monotonic()
-                    if remaining <= 0 or not select.select([self.sock], [], [], remaining)[0]:
+                    if remaining <= 0:
                         raise socket.timeout("no message in time")
+                    wait = min(wait, remaining)
+                if not select.select([self.sock], [], [], wait)[0]:
+                    continue  # nothing yet: check `closed` and the deadline again
                 chunk = self.sock.recv(16384)
             except socket.timeout:
                 if self.closed:
