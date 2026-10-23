@@ -1,0 +1,50 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest
+
+  relay:
+    # macOS, not Linux: the tests drive the app's own relay client, and the
+    # app's platform layer only runs on Windows and macOS.
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          npm ci
+          python -m pip install -r ../requirements-dev.txt
+      - name: Type check
+        run: npm run check
+      - name: Online integration tests against a local relay
+        run: |
+          npx wrangler dev --port 8787 --ip 127.0.0.1 \
+            --var CREATE_LIMIT:10000 --var LOBBIES_PER_CLIENT:10000 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8787/v1/lobbies && break; sleep 1; done
+          WEEKNUMBER_TZD_RELAY=http://127.0.0.1:8787 python -m pytest ../tests/test_tzd_relay.py
