@@ -1,0 +1,17 @@
+# Exact versions checked on 2026-10-18.
+# Install these before invoking build_exe.bat or build_app.sh without --venv.
+PyInstaller==6.22.3
+Pillow==13.0.0
+holidays==0.106
+# Online Timezone Dominator lobbies: WebSockets to the relay, TLS checked against the OS trust store.
+websocket-client==1.9.2
+truststore==0.10.5
+# End-to-end encrypted Timezone Dominator chat (X25519, ChaCha20-Poly1305); cffi and
+# pycparser are its dependencies, pinned for reproducible builds.
+# cryptography publishes no Windows ARM64 wheel (checked 2026-10-21), so a
+# native ARM64 Windows build goes without chat; an x64 build has it and also
+# runs on Windows 11 on ARM.
+cryptography==50.0.2; sys_platform != "win32" or platform_machine != "ARM64"
+cffi==2.1.1; sys_platform != "win32" or platform_machine != "ARM64"
+pycparser==3.11; sys_platform != "win32" or platform_machine != "ARM64"
+pystray==0.19.5; sys_platform == "win32"
