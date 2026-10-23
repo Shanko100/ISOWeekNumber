@@ -229,8 +229,6 @@ without encrypted chat. 32-bit Python is refused.
 
 For a public release, use `requirements-release.txt` rather than
 `build_exe.bat --venv`; the release requirements pin exact dependency versions.
-Complete the [binary release checklist](docs/BINARY_RELEASE_CHECKLIST.md) before
-publishing.
 
 </details>
 
@@ -326,7 +324,6 @@ ISOWeekNumber/
 - 🆕 [v1.0 release notes](docs/RELEASE_NOTES_v1.0.md)
 - 📝 [Changelog](CHANGELOG.md)
 - 🏢 [Administrator guide](docs/ADMINISTRATION.md)
-- ✅ [Binary release checklist](docs/BINARY_RELEASE_CHECKLIST.md)
 - 🔎 [Data and asset provenance](docs/PROVENANCE.md)
 - ⚖️ [Legal notices](docs/LEGAL_NOTICES.md)
 - 📜 [Third-party notices](docs/THIRD_PARTY_NOTICES.md)

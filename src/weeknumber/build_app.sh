@@ -17,7 +17,7 @@
 #  The bundle is a menu-bar accessory (LSUIElement): no Dock icon,
 #  like the Windows tray app. It is ad-hoc signed so it runs on the
 #  build machine; sign with a Developer ID and notarize before
-#  publishing (see docs/BINARY_RELEASE_CHECKLIST.md).
+#  publishing.
 # ============================================================
 set -euo pipefail
 cd "$(dirname "$0")"

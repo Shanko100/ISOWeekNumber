@@ -56,7 +56,6 @@ def test_required_release_documents_exist():
         ROOT / "README.md",
         ROOT / "docs" / "THIRD_PARTY_NOTICES.md",
         ROOT / "docs" / "PROVENANCE.md",
-        ROOT / "docs" / "BINARY_RELEASE_CHECKLIST.md",
         ROOT / "requirements-release.txt",
         ROOT / "CHANGELOG.md",
         ROOT / "docs" / "RELEASE_NOTES_v1.0.md",
