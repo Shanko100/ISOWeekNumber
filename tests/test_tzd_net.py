@@ -186,3 +186,25 @@ def test_decode_rejects_wrong_version_and_shapes():
     with pytest.raises(net.ProtocolError):
         net.decode(b'{"v":1}')
     assert net.decode(net.encode({"type": "x"}).strip()) == {"type": "x", "v": 1}
+
+
+def test_a_local_close_ends_a_waiting_read_promptly():
+    # macOS may not wake a thread blocked on a socket that another thread
+    # shuts down; the read must notice `closed` itself, well before the
+    # socket's 10-second send timeout.
+    import threading
+    with socket.create_server(("127.0.0.1", 0)) as server:
+        client = socket.create_connection(server.getsockname(), timeout=TIMEOUT)
+        peer, _ = server.accept()
+        conn = net._Connection(client)
+        result = []
+        reader = threading.Thread(target=lambda: result.append(conn.receive()), daemon=True)
+        reader.start()
+        time.sleep(0.2)
+        conn.closed = True  # as if close() had not woken the reader
+        reader.join(timeout=2)
+        try:
+            assert not reader.is_alive() and result == [None]
+        finally:
+            client.close()
+            peer.close()

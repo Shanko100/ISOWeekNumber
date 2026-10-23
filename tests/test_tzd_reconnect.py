@@ -233,7 +233,14 @@ def test_guessing_the_code_from_many_places_is_capped(board, host, mode, monkeyp
     sock = socket.create_connection(("127.0.0.1", host.port), timeout=TIMEOUT)
     sock.sendall(net.encode({"type": "hello", "name": "Late", "code": host.code,
                              "board": board.fingerprint}))
-    assert sock.makefile("rb").readline() == b""  # the lobby takes no more tries
+    # The lobby takes no more tries: it closes the connection unanswered.
+    # Closing with the hello still unread makes the OS reset the connection,
+    # which Windows reports as an error and Linux and macOS often as EOF.
+    try:
+        reply = sock.makefile("rb").readline()
+    except ConnectionError:
+        reply = b""
+    assert reply == b""
     sock.close()
 
 
