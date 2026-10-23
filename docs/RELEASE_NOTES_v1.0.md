@@ -69,13 +69,6 @@ Anyway** (on macOS 14 and earlier, Control-click the app and choose
   `RELAY_URL` in `weeknumber_tzd_relay.py`). Deploy it before publishing;
   see `relay/README.md`.
 
-## Before publishing the binaries
-
-Build and verify both binaries as described in
-[`BINARY_RELEASE_CHECKLIST.md`](BINARY_RELEASE_CHECKLIST.md), including
-attaching `pystray-0.19.5.tar.gz` to the release: the LGPL requires its
-source to be available, and the app's Legal notices point to that asset.
-
 ## Source
 
 This release is identified in the application, the Windows version resource
