@@ -1,0 +1,7 @@
+# cmd.exe can miss goto labels in LF-only batch files; always check them
+# out with CRLF, whatever core.autocrlf says.
+*.bat text eol=crlf
+
+# The holiday index stores byte lengths of the lines after it; a CRLF
+# checkout would shift every one of them.
+src/weeknumber/holiday_data.jsonl -text
