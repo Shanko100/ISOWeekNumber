@@ -8,16 +8,6 @@ A featherweight tray calendar for **Windows** 🪟 and **macOS** 🍎 with ISO w
 numbers, public holidays, time-zone context, quick copy actions and a clean,
 native feel.
 
-<p>
-  <a href="https://github.com/Shanko100/ISOWeekNumber/releases/latest"><strong>⬇️ Download the latest release</strong></a>
-  ·
-  <a href="#-preview">👀 Preview</a>
-  ·
-  <a href="#-install">🚀 Install</a>
-  ·
-  <a href="#-run-from-source">🧑‍💻 Run from source</a>
-</p>
-
 [![Latest release](https://img.shields.io/github/v/release/Shanko100/ISOWeekNumber?style=for-the-badge&color=7c3aed)](https://github.com/Shanko100/ISOWeekNumber/releases)
 [![Tests](https://img.shields.io/github/actions/workflow/status/Shanko100/ISOWeekNumber/tests.yml?branch=main&style=for-the-badge&label=tests)](https://github.com/Shanko100/ISOWeekNumber/actions)
 [![Platforms](https://img.shields.io/badge/Windows_10%2F11_·_macOS_12%2B-2563eb?style=for-the-badge)](#-requirements)
