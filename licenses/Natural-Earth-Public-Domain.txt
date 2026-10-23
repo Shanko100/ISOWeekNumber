@@ -1,0 +1,10 @@
+Natural Earth is a public domain map dataset.
+
+All versions of Natural Earth raster and vector map data found on the Natural
+Earth website are in the public domain. You may use the maps in any manner,
+including modification and commercial use. Permission is not required.
+
+Crediting Natural Earth is not required. The project suggests:
+“Made with Natural Earth.”
+
+Recorded source release for this project: Natural Earth Vector 5.1.2.

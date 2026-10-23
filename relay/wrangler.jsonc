@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tzd-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [
+      { "name": "DIRECTORY", "class_name": "Directory" },
+      { "name": "LOBBY", "class_name": "Lobby" }
+    ]
+  },
+  // The Workers Free plan only offers SQLite-backed Durable Objects.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Directory", "Lobby"] }]
+}

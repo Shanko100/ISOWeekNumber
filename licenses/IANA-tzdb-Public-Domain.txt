@@ -1,0 +1,9 @@
+IANA Time Zone Database notice
+
+The Time Zone Database code and data used by this project are in the public
+domain unless a particular source file states otherwise.
+
+Recorded database release for this project: 2026e.
+
+This notice describes the source status; IANA names and logos are not granted
+for endorsement use.
