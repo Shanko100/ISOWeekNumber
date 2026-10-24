@@ -1,0 +1,136 @@
+name: build
+
+# Builds WeekNumber.exe (Windows x64) and WeekNumber.dmg (macOS arm64) from
+# the chosen branch or tag. Start it by hand: Actions -> build -> Run workflow.
+# The files are attached to the run as downloads; nothing is committed.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Same Python and fixed hash seed on every run, so the same commit builds
+  # with the same interpreter and the same bytecode ordering.
+  PYTHON_VERSION: "3.12.10"
+  PYTHONHASHSEED: "0"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_INPUT: "1"
+
+jobs:
+  windows:
+    name: WeekNumber.exe (Windows x64)
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: x64
+
+      - name: Fix timestamps to the commit time
+        shell: bash
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      - name: Install the exact build dependencies
+        run: |
+          python -m pip install --require-hashes --only-binary :all: -r requirements-release.lock
+          python -m pip check
+
+      - name: Build
+        working-directory: src/weeknumber
+        shell: cmd
+        run: build_exe.bat --nopause
+
+      - name: Check the bundled holiday data matches the repository
+        # build_exe.bat regenerates holiday_data.jsonl before packaging; only
+        # its generation timestamp may differ from the committed file.
+        shell: python
+        run: |
+          import json, subprocess, sys
+          path = "src/weeknumber/holiday_data.jsonl"
+          built = open(path, "rb").read().split(b"\n")
+          committed = subprocess.run(["git", "show", f"HEAD:{path}"], check=True,
+                                     capture_output=True).stdout.split(b"\n")
+          def strip(value):
+              if isinstance(value, dict):
+                  return {k: strip(v) for k, v in value.items() if k != "generated_utc"}
+              if isinstance(value, list):
+                  return [strip(v) for v in value]
+              return value
+          if built[1:] != committed[1:] or strip(json.loads(built[0])) != strip(json.loads(committed[0])):
+              sys.exit("The regenerated holiday data differs from the committed file.")
+          print("Holiday data identical to the repository.")
+
+      - name: Checksum
+        shell: bash
+        run: |
+          VERSION=$(python -c "import re; print(re.search(r'APP_VERSION = \"([^\"]+)\"', open('src/weeknumber/weeknumber_core.py', encoding='utf-8').read()).group(1))")
+          HASH=$(sha256sum src/weeknumber/dist/WeekNumber.exe | cut -d' ' -f1)
+          {
+            echo "### WeekNumber.exe"
+            echo "- Version: $VERSION"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Python: $(python --version)"
+            echo "- SHA-256: \`$HASH\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: src/weeknumber/dist/WeekNumber.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+  macos:
+    name: WeekNumber.dmg (macOS arm64)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: arm64
+
+      - name: Fix timestamps to the commit time
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      - name: Install the exact build dependencies
+        run: |
+          python -m pip install --require-hashes --only-binary :all: -r requirements-release.lock
+          python -m pip check
+          python -c "import platform, sys; sys.exit(0 if platform.machine() == 'arm64' else 'Not an arm64 Python')"
+
+      - name: Build
+        working-directory: src/weeknumber
+        env:
+          PYTHON: python
+        run: bash build_app.sh
+
+      - name: Checksum
+        run: |
+          VERSION=$(python -c "import re; print(re.search(r'APP_VERSION = \"([^\"]+)\"', open('src/weeknumber/weeknumber_core.py', encoding='utf-8').read()).group(1))")
+          HASH=$(shasum -a 256 src/weeknumber/dist/WeekNumber.dmg | cut -d' ' -f1)
+          {
+            echo "### WeekNumber.dmg"
+            echo "- Version: $VERSION"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Python: $(python --version)"
+            echo "- SHA-256: \`$HASH\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: src/weeknumber/dist/WeekNumber.dmg
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
