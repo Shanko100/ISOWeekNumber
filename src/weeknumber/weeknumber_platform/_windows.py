@@ -884,9 +884,11 @@ def refresh_startup_path() -> None:
         argv = _launch_parts()
         migrate_legacy(_STORE, argv)
         command = quote_command(argv) if argv is not None else None
+        # Nothing to repair -- refresh_startup's own first check -- needs no
+        # location checks (they load tempfile and ask the shell for folders).
         current = _STORE.run_get(RUN_VALUE)
         if current is None or command is None or current == command:
-            return  # nothing to repair (refresh_startup's own first check): skip the location checks
+            return
         refresh_startup(_STORE, command, _startup_location_problem())
     except OSError:
         log.exception("refresh_startup_path failed")
