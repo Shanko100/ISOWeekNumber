@@ -2,6 +2,45 @@
 
 All notable changes to WeekNumber are documented in this file.
 
+## [Unreleased]
+
+### Smaller downloads
+
+- `WeekNumber.exe` (x64) 23.1 → 16.9 MB, `WeekNumber-arm64.exe` 17.9 →
+  15.8 MB, `WeekNumber.dmg` 20.8 → 14.2 MB, with every feature kept.
+- The builds leave out Pillow's image-file readers and their codecs (AVIF,
+  WebP, colour management): the app draws its images and opens only
+  `app.ico`, which keeps its ICO, PNG and BMP readers.
+- Python's zstd module is left out (nothing uses zstd archives), and on
+  Windows the C runtime copy PyInstaller packs for systems older than
+  Windows 10, which always use their own.
+- The disk image is LZMA-compressed (opens on macOS 10.15 and later).
+
+### Memory
+
+- About 1.8 MB less at idle (a frozen build of the tray's start-up
+  imports, 26.4 → 24.6 MB): the frozen app no longer imports `inspect`,
+  `zipfile` and `ast` at every launch for a PyInstaller fix-up it never
+  needs, and `tempfile` (with `shutil`, `bz2`, `lzma`, `random`) loads only
+  when a file is written. On Windows the startup-entry location check runs
+  only when there is an entry to repair.
+
+### Security
+
+- A host or player sending a list or an object where the game expects a
+  territory, player or card is refused instead of ending that connection's
+  thread (a host could leave a joiner's window showing "connected").
+- A LAN lobby code or resume token with non-ASCII characters is refused and
+  counted like any wrong code; before, the handshake thread ended unanswered.
+- `WEEKNUMBER_TZD_RELAY` takes the same plain `https://` addresses as the
+  `RelayURL` policy; plain `http://` reaches only a relay on this machine.
+- No redirects from the relay are followed, so the host's token can't be
+  sent to another address; lobby ids and tokens must be ASCII.
+- Relay: a lobby's status reaches the public list at most once a second, one
+  network may hold 50 of the 2000 lobby-list sockets, IPv6 callers are
+  limited per /64, lobby-creation bodies are capped while they are read, and
+  ids and tokens are uniformly random. Redeploy `relay/` to apply.
+
 ## [1.0] - 2026-10-23
 
 The first public release.
