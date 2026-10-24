@@ -31,12 +31,15 @@ billed.
 Lobbies are public and open, so the Worker limits what one network can do:
 
 - 5 lobby creations per 10 minutes, and at most 3 open lobbies.
+- 50 open lobby lists (of 2000 in total).
 - 200 lobbies in total, 6 seats per lobby.
+- A lobby's seat count and status reach the list at most once a second.
 - 64 KiB per message, and 24-character names.
 - A lobby whose host never connects is dropped after 2 minutes; every lobby
   is dropped after 12 hours.
 
-Rate limits key on a hash of the caller's IP address, salted with a random
+An IPv6 address counts by its /64 network, which one subscriber usually
+holds whole. Rate limits key on a hash of the caller's IP address, salted with a random
 value generated inside the Directory object, so the hashes can't be
 reversed. Raw addresses are never stored, and hosts learn nothing about
 their players' networks: a player reaches the host only as "peer n".
@@ -50,7 +53,7 @@ online game is open.
 
 | What | Why | How long |
 |---|---|---|
-| Your IP address | Abuse limits | Never stored as is. A salted 16-character hash is kept when you create a lobby: with the lobby until it closes, and for the creation limit, deleted within 15 minutes. |
+| Your IP address | Abuse limits | Never stored as is. A salted 16-character hash is kept when you create a lobby: with the lobby until it closes, and for the creation limit, deleted within 15 minutes. An open lobby list carries the same hash in memory until it closes. |
 | Lobby name and host name | Shown in the public lobby list | Until the lobby closes; at most about 12 hours. |
 | Player names, game moves and chat | Passed between the host and the players | Not stored; each message is forwarded and dropped. A closed lobby's storage is wiped. |
 

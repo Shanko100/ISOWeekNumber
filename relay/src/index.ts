@@ -45,6 +45,7 @@ export interface Env {
   GUEST_RATE?: string;
   CHAT_RATE?: string;
   CHAT_BUDGET?: string;
+  VIEWERS_PER_CLIENT?: string;
 }
 
 function limit(value: string | undefined, fallback: number): number {
@@ -89,6 +90,16 @@ const UNCLAIMED_MS = 2 * 60_000;
 const MAX_AGE_MS = 12 * 60 * 60_000;
 const SWEEP_MS = 5 * 60_000;
 const MAX_VIEWERS = 2000;
+/** Lobby browsers one network may hold open, so no one client can take
+ *  every place in MAX_VIEWERS. */
+const MAX_VIEWERS_PER_CLIENT = 50;
+/** A lobby's seat count and status reach the public list at most this often;
+ *  a host sending more only has its latest one listed. Every update is sent
+ *  to every open lobby browser, so an unbounded rate would let one host keep
+ *  the Directory busy for everyone. */
+const INFO_INTERVAL_MS = 1_000;
+/** A lobby creation's JSON body: a name, a host name and a fingerprint. */
+const MAX_CREATE_BYTES = 2048;
 const LOBBY_ID = /^[a-z0-9]{12}$/;
 const BOARD_FINGERPRINT = /^[0-9a-f]{16}$/;
 
@@ -136,9 +147,17 @@ function cleanName(value: unknown, fallback: string): string {
   return Array.from(text).slice(0, MAX_NAME_CHARS).join("") || fallback;
 }
 
+/** Uniformly random characters of `alphabet`: bytes at or above the largest
+ *  multiple of its length are skipped, so no character is more likely. */
 function randomString(length: number, alphabet: string): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
-  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+  const unbiased = 256 - (256 % alphabet.length);
+  let out = "";
+  while (out.length < length) {
+    for (const b of crypto.getRandomValues(new Uint8Array(length))) {
+      if (b < unbiased && out.length < length) out += alphabet[b % alphabet.length];
+    }
+  }
+  return out;
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -147,7 +166,49 @@ async function sha256Hex(text: string): Promise<string> {
 }
 
 function callerIp(request: Request): string {
-  return request.headers.get("CF-Connecting-IP") ?? "local";
+  return networkOf(request.headers.get("CF-Connecting-IP") ?? "local");
+}
+
+/** The address a client is limited by: an IPv4 address as it is, an IPv6
+ *  address by its /64 network, which one subscriber usually holds whole --
+ *  otherwise every address in it would count as a new client. */
+function networkOf(ip: string): string {
+  if (!ip.includes(":")) return ip;
+  const [head, tail = ""] = ip.split("::", 2);
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const last = right.length ? right[right.length - 1] : left[left.length - 1] ?? "";
+  if (last.includes(".")) return last;  // IPv4-mapped, e.g. ::ffff:192.0.2.1
+  const groups = ip.includes("::")
+    ? [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right]
+    : left;
+  return groups.slice(0, 4).map((g) => (parseInt(g, 16) || 0).toString(16)).join(":") + "::/64";
+}
+
+/** The body as text, or null when it is longer than `max` bytes. Counted
+ *  while it is read: Content-Length may be absent (chunked) or wrong. */
+async function readBounded(request: Request, max: number): Promise<string | null> {
+  if (request.body === null) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
 }
 
 function isWebSocket(request: Request): boolean {
@@ -180,10 +241,12 @@ export default {
       if (request.method === "GET") return json({ lobbies: await directory.list() });
       if (request.method === "POST") {
         const length = Number(request.headers.get("content-length") ?? "0");
-        if (length > 2048) return json({ error: "Request too large." }, 413);
-        let body: Record<string, unknown>;
+        if (length > MAX_CREATE_BYTES) return json({ error: "Request too large." }, 413);
+        const text = await readBounded(request, MAX_CREATE_BYTES);
+        if (text === null) return json({ error: "Request too large." }, 413);
+        let body: Record<string, unknown> | null;
         try {
-          body = await request.json();
+          body = JSON.parse(text);
         } catch {
           return json({ error: "Malformed request." }, 400);
         }
@@ -251,8 +314,14 @@ export class Directory extends DurableObject<Env> {
     if (this.ctx.getWebSockets().length >= MAX_VIEWERS) {
       return new Response("Too many lobby browsers are open; try again shortly.", { status: 503 });
     }
+    // Tagged with the network's keyed hash (never the address) to count them.
+    const viewer = await this.clientKey(callerIp(request));
+    if (this.ctx.getWebSockets(viewer).length >=
+        limit(this.env.VIEWERS_PER_CLIENT, MAX_VIEWERS_PER_CLIENT)) {
+      return new Response("Too many lobby browsers are open from your network.", { status: 429 });
+    }
     const [client, server] = Object.values(new WebSocketPair());
-    this.ctx.acceptWebSocket(server);
+    this.ctx.acceptWebSocket(server, [viewer]);
     server.send(this.snapshot());
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -398,6 +467,9 @@ export class Lobby extends DurableObject<Env> {
   private bytes: number | null = null;
   private unflushed = 0;
   private chatBytes = 0;
+  /** When this lobby's status last went to the list (see INFO_INTERVAL_MS).
+   *  In memory: an evicted object may send one update early, no more. */
+  private infoSentAt = 0;
 
   async init(id: string, tokenHash: string): Promise<void> {
     await this.ctx.storage.put({ id, tokenHash, nextPeer: 1, bytes: 0 });
@@ -577,12 +649,37 @@ export class Lobby extends DurableObject<Env> {
         this.forget(frame.peer);
       }
     } else if (frame.relay === "info" && typeof frame.players === "number") {
-      const id = await this.ctx.storage.get<string>("id");
-      if (id) {
-        await this.env.DIRECTORY.getByName("directory")
-          .update(id, frame.players, frame.started === true);
-      }
+      await this.reportInfo(frame.players, frame.started === true);
     }
+  }
+
+  /** List the lobby's seats and status now, or -- within INFO_INTERVAL_MS of
+   *  the last update -- keep it and let the alarm list the latest one. */
+  private async reportInfo(players: number, started: boolean): Promise<void> {
+    const now = Date.now();
+    if (now - this.infoSentAt >= INFO_INTERVAL_MS) {
+      this.infoSentAt = now;
+      await this.ctx.storage.delete("pendingInfo");
+      await this.sendInfo(players, started);
+      return;
+    }
+    await this.ctx.storage.put("pendingInfo", { players, started });
+    if ((await this.ctx.storage.getAlarm()) === null) {
+      await this.ctx.storage.setAlarm(this.infoSentAt + INFO_INTERVAL_MS);
+    }
+  }
+
+  private async sendInfo(players: number, started: boolean): Promise<void> {
+    const id = await this.ctx.storage.get<string>("id");
+    if (id) await this.env.DIRECTORY.getByName("directory").update(id, players, started);
+  }
+
+  async alarm(): Promise<void> {
+    const pending = await this.ctx.storage.get<{ players: number; started: boolean }>("pendingInfo");
+    if (pending === undefined) return;
+    await this.ctx.storage.delete("pendingInfo");
+    this.infoSentAt = Date.now();
+    await this.sendInfo(pending.players, pending.started);
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
