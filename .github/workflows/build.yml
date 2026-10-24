@@ -7,9 +7,6 @@ name: build
 
 on:
   workflow_dispatch:
-  # TEMPORARY: measure this branch's build sizes; removed in the next commit.
-  push:
-    branches: [claude/focused-shannon-ytwx7l]
 
 permissions:
   contents: read
