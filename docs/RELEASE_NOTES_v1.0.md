@@ -2,8 +2,7 @@
 
 WeekNumber v1.0 is the first public release: the current ISO week in the
 Windows notification area or the macOS menu bar, one click from a two-month
-calendar with public holidays and a time-zone clock. It stays light, and it
-cannot touch the network unless you allow it, each time.
+calendar with public holidays and a time-zone clock. It stays light.
 
 ## Downloads
 
@@ -38,13 +37,10 @@ Anyway** (on macOS 14 and earlier, Control-click the app and choose
 - **Time-zone clock:** pick any city from a colourful world map.
 - **Make it yours:** WeekNumber's own colour picker with 36 standard colours,
   bold digits, light or dark mode.
-- **No network unless you allow it:** WeekNumber blocks every Internet
-  connection from the moment it starts. The one optional extra that can
-  connect asks each time it opens.
 - **Light:** only the tray loads at start-up, and closed windows give their
   memory back; on macOS the app starts at about 40 MB.
 - **Legal notices:** About → Legal notices shows the license and warranty,
-  trademarks, privacy and encryption notices, then every license.
+  trademarks and privacy notices, then every license.
 
 ## Screenshots
 
@@ -59,15 +55,11 @@ Anyway** (on macOS 14 and earlier, Control-click the app and choose
 
 - Built with Python 3.15 from `requirements-release.lock`, which pins every
   dependency with its hash. `build_exe.bat` builds for the running Python's
-  architecture (x64 or ARM64) and refuses 32-bit Python; both exes have
-  encrypted chat (PyNaCl and libsodium).
+  architecture (x64 or ARM64) and refuses 32-bit Python.
 - `build_app.sh` builds `WeekNumber.app` and `WeekNumber.dmg`, reports the
   architecture and warns about an x86_64 Python under Rosetta.
 - Both scripts bundle `Licenses.txt`, written by `collect_licenses.py` with
   `docs/LEGAL_NOTICES.md` first.
-- The online relay is the Cloudflare Worker in `relay/` (`tzd-relay`,
-  `RELAY_URL` in `weeknumber_tzd_relay.py`). Deploy it before publishing;
-  see `relay/README.md`.
 
 ## Source
 
