@@ -7,26 +7,19 @@ once no window is open (see weeknumber_core.ModuleSweeper): the idle app
 holds the tray icon and nothing else.
 """
 
-import os
 import sys
-import tempfile
 import tkinter as tk
 from typing import TYPE_CHECKING, NamedTuple
 
 if sys.platform == "win32":
-    try:
-        import pystray
-        from pystray import MenuItem
-    except ImportError:
-        print("Missing dependency: pystray\nInstall with: pip install pystray pillow")
-        sys.exit(1)
-    # pystray needs Pillow anyway; on macOS the menu bar draws the number as
-    # text and Pillow loads with the first window instead.
+    # The tray icon is drawn with Pillow; on macOS the menu bar draws the
+    # number as text and Pillow loads with the first window instead.
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
         print("Missing dependency: Pillow\nInstall with: pip install pillow")
         sys.exit(1)
+    from weeknumber_platform._wintray import NotifyIcon
 else:
     # Checked now, loaded with the first window: a missing Pillow should
     # stop the app at launch with the install hint, not on the first click.
@@ -55,12 +48,8 @@ from weeknumber_core import (
 )
 
 if TYPE_CHECKING:
-    # pystray assigns Icon at import time from the selected backend, so
-    # `pystray.Icon` is a variable to static analyzers. All backends derive
-    # from this base class; use it for annotations only. Application lives in
-    # weeknumber.py, which imports this module -- resolvable only under
-    # TYPE_CHECKING, where the circularity is harmless.
-    from pystray._base import Icon as PystrayIcon
+    # Application lives in weeknumber.py, which imports this module --
+    # resolvable only under TYPE_CHECKING, where the circularity is harmless.
     from weeknumber import Application
     from weeknumber_menubar import MenuBarItem
     from weeknumber_timezone_dialog import TimeZoneDialog
@@ -183,61 +172,15 @@ class MenuEntry(NamedTuple):
 SEPARATOR = None
 
 
-if sys.platform == "win32":
-    class NativeSizeIcon(pystray.Icon):
-        """pystray loads its ICO with LR_DEFAULTSIZE, i.e. at SM_CXICON (the
-        LARGE icon size, 32px @ 96 DPI); the shell then shrinks that handle back
-        to SM_CXSMICON. The bitmap is thus GDI-resampled twice -- upscaled, then
-        downscaled -- and arrives blurry no matter how well it was rendered.
-
-        This override writes an ICO containing exactly one frame at the image's
-        own pixel size (IconRenderer already matches it to SM_CXSMICON) and loads
-        it at that size, so the shell draws it 1:1 with no resampling. The
-        explicit ``sizes=`` is required: PIL's default ICO save only emits
-        standard frame sizes and would drop e.g. the 20px frame of a 125%-scaled
-        system. Any failure falls back to pystray's stock path (blurry but
-        functional), keeping the coupling to pystray internals non-fatal.
-
-        Trust note: the ICO briefly exists in the per-user %TEMP% between write
-        and LoadImage. mkstemp creates it exclusively, and %TEMP% is not
-        writable by other users; a same-user process swapping it in that window
-        is outside this app's threat model (same-user code implies full
-        compromise anyway)."""
-
-        def _assert_icon_handle(self):
-            if self._icon_handle:
-                return
-            try:
-                from pystray._util import win32 as ps_win32
-                fd, path = tempfile.mkstemp(".ico")
-                try:
-                    with os.fdopen(fd, "wb") as f:
-                        self.icon.save(f, format="ICO", sizes=[self.icon.size])
-                    handle = ps_win32.LoadImage(
-                        None, path, ps_win32.IMAGE_ICON,
-                        self.icon.width, self.icon.height,
-                        ps_win32.LR_LOADFROMFILE)
-                finally:
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
-                if handle:
-                    self._icon_handle = handle
-                    return
-            except Exception:
-                log.exception("Native-size icon load failed; using pystray default")
-            super()._assert_icon_handle()
-
-
 class TrayIcon:
     def __init__(self, app: "Application") -> None:
         self.app = app
         self.week = WeekNumber()
         self.renderer = IconRenderer()
         self.icon_size = tray_icon_size()
-        #: NativeSizeIcon on Windows, MenuBarItem on macOS.
-        self.icon: "PystrayIcon | MenuBarItem | None" = None
+        #: NotifyIcon (weeknumber_platform._wintray) on Windows, MenuBarItem
+        #: on macOS.
+        self.icon: "NotifyIcon | MenuBarItem | None" = None
         self._last_image_key: tuple | None = None
         self._sweeper = ModuleSweeper()
 
@@ -287,8 +230,8 @@ class TrayIcon:
 
     def refresh(self) -> None:
         """Update tooltip always, the icon bitmap only when its inputs
-        changed. The menu is never reassigned: pystray evaluates `checked`
-        callables each time the menu opens."""
+        changed. The menu needs nothing: both backends read the entries, and
+        evaluate `checked`, each time it opens."""
         if self.icon is None:
             return
         key = self._image_key()
@@ -306,7 +249,7 @@ class TrayIcon:
             self.icon.icon = self._image()
         self.icon.title = self._tooltip()
 
-    # -- menu callbacks (pystray thread on Windows, Tk thread on macOS) -------
+    # -- menu callbacks (tray thread on Windows, Tk thread on macOS) ---------
     def _toggle_calendar(self) -> None:
         from weeknumber_calendar import CalendarPopup
         CalendarPopup.toggle(self.app.root, self.app.settings, self._open_timezone)
@@ -483,19 +426,6 @@ class TrayIcon:
             MenuEntry("Quit" if IS_MACOS else "Exit", self.on_exit),
         ]
 
-    def _pystray_menu(self) -> "pystray.Menu":
-        items = []
-        for entry in self._menu_entries():
-            if entry is SEPARATOR:
-                items.append(pystray.Menu.SEPARATOR)
-                continue
-            checked = entry.checked
-            items.append(MenuItem(
-                entry.label, entry.action,
-                checked=(lambda item, f=checked: f()) if checked else None,
-                default=entry.default, visible=entry.visible))
-        return pystray.Menu(*items)
-
     def run(self) -> None:
         self._last_image_key = self._image_key()
         if IS_MACOS:
@@ -507,15 +437,13 @@ class TrayIcon:
                                 self.app.settings.is_bold)
             self.icon.set_tooltip(self._tooltip())
             return
-        self.icon = NativeSizeIcon(APP_NAME, self._image(), self._tooltip(),
-                                   self._pystray_menu())
+        self.icon = NotifyIcon(APP_NAME, self._image(), self._tooltip(),
+                               self._menu_entries)
         self.icon.run_detached()
 
     def stop(self) -> None:
         if self.icon is not None:
             try:
-                if not IS_MACOS:
-                    self.icon.visible = False
                 self.icon.stop()
             except Exception:
                 log.exception("Tray icon stop failed")

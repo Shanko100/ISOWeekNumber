@@ -9,7 +9,7 @@ import weeknumber_tzd_chat as chat
 import weeknumber_tzd_net as net
 from weeknumber_platform import _common
 
-pytestmark = pytest.mark.skipif(not chat.available(), reason="cryptography is not installed")
+pytestmark = pytest.mark.skipif(not chat.available(), reason="PyNaCl is not installed")
 
 HOST_PRIVATE = bytes(range(32))
 GUEST_PRIVATE = bytes(range(32, 64))
@@ -31,6 +31,42 @@ def test_x25519_matches_rfc_7748():
     assert bob.public.hex() == "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"
     shared = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"
     assert alice.exchange(bob.public).hex() == shared == bob.exchange(alice.public).hex()
+
+
+@pytest.mark.parametrize(("salt", "info", "length", "okm"), [
+    # RFC 5869, appendix A.1 and A.3.
+    (bytes(range(13)), bytes(range(0xF0, 0xFA)), 42,
+     "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"
+     "34007208d5b887185865"),
+    (b"", b"", 42,
+     "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d"
+     "9d201395faa4b61a96c8"),
+])
+def test_hkdf_matches_rfc_5869(salt, info, length, okm):
+    assert chat.hkdf_sha256(b"\x0b" * 22, salt, info, length).hex() == okm
+
+
+def test_chacha20_poly1305_matches_rfc_8439():
+    # RFC 8439, section 2.8.2.
+    key = bytes(range(0x80, 0xA0))
+    nonce = bytes.fromhex("070000004041424344454647")
+    aad = bytes.fromhex("50515253c0c1c2c3c4c5c6c7")
+    plain = (b"Ladies and Gentlemen of the class of '99: If I could offer you "
+             b"only one tip for the future, sunscreen would be it.")
+    box = chat._Aead(key).encrypt(nonce, plain, aad)
+    assert box[-16:].hex() == "1ae10b594f09e26a7e902ecbd0600691"
+    assert box[:16].hex() == "d31a8d34648e60db7b86afbc53ef7ec2"
+    assert chat._Aead(key).decrypt(nonce, box, aad) == plain
+
+
+def test_a_short_or_low_order_input_is_refused():
+    host, guest = pair()
+    assert guest.open("chat", 0, base64.b64encode(b"x" * 15).decode()) is None
+    own = chat.KeyPair.from_private_bytes(HOST_PRIVATE)
+    assert own.exchange(bytes(32)) is None          # low-order point: no secret
+    assert own.exchange(b"short") is None
+    with pytest.raises(ValueError):
+        chat.KeyPair.from_private_bytes(b"short")
 
 
 def test_the_wire_format_is_pinned():

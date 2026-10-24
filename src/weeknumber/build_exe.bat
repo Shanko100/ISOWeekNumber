@@ -10,7 +10,7 @@ cd /d "%~dp0"
 ::    --onedir   folder build dist\WeekNumber\ - starts faster at
 ::               logon (no per-launch %TEMP% extraction / AV rescan)
 ::    --venv     build inside an isolated .venv-build with the
-::               pinned requirements-release.txt: smallest,
+::               hash-pinned requirements-release.lock: smallest,
 ::               reproducible exe regardless of what is installed
 ::    --nopause  no interactive pause; returns exit code 0/1
 ::
@@ -18,12 +18,12 @@ cd /d "%~dp0"
 ::  generated into build\ on every run; the version number is
 ::  read from APP_VERSION in weeknumber_core.py.
 ::
-::  Architecture: the exe is built for the Python that runs
+::  Python: 3.15, the version requirements-release.lock is made
+::  for. Architecture: the exe is built for the Python that runs
 ::  this script - x64 Python gives an x64 exe (also runs on
 ::  Windows 11 on ARM, emulated), ARM64 Python a native ARM64
-::  exe. 32-bit Python is refused. cryptography publishes no
-::  Windows ARM64 wheel, so a native ARM64 build has no game
-::  chat (everything else, reconnecting included, works).
+::  exe; both have every feature, chat included. 32-bit Python
+::  is refused.
 :: ============================================================
 
 set "BUILD_OK=0"
@@ -53,7 +53,7 @@ echo.
 echo [1/9] Checking project files...
 echo       Folder: !CD!
 
-for %%F in (weeknumber.py weeknumber_core.py weeknumber_tray.py weeknumber_calendar.py weeknumber_clipboard.py weeknumber_timezone.py weeknumber_timezone_dialog.py weeknumber_holiday_dialog.py weeknumber_about.py weeknumber_license_dialog.py weeknumber_color_dialog.py weeknumber_widgets.py weeknumber_dialog.py weeknumber_map.py weeknumber_tzd_rules.py weeknumber_tzd_net.py weeknumber_tzd_relay.py weeknumber_tzd_board.py weeknumber_tzd_lobby.py weeknumber_tzd_dialog.py weeknumber_tzd_chat.py weeknumber_tzd_chat_view.py weeknumber_tzd_fx.py weeknumber_tzd_sound.py weeknumber_platform\__init__.py weeknumber_platform\_common.py weeknumber_platform\_windows.py weeknumber_platform\_windows_tz.py generate_holiday_data.py collect_licenses.py country_names.json holiday_data.jsonl timezone_data.json tzd_data.json app.ico) do (
+for %%F in (weeknumber.py weeknumber_core.py weeknumber_tray.py weeknumber_calendar.py weeknumber_clipboard.py weeknumber_timezone.py weeknumber_timezone_dialog.py weeknumber_holiday_dialog.py weeknumber_about.py weeknumber_license_dialog.py weeknumber_color_dialog.py weeknumber_widgets.py weeknumber_dialog.py weeknumber_map.py weeknumber_tzd_rules.py weeknumber_tzd_net.py weeknumber_tzd_relay.py weeknumber_tzd_board.py weeknumber_tzd_lobby.py weeknumber_tzd_dialog.py weeknumber_tzd_chat.py weeknumber_tzd_chat_view.py weeknumber_tzd_fx.py weeknumber_tzd_sound.py weeknumber_platform\__init__.py weeknumber_platform\_common.py weeknumber_platform\_windows.py weeknumber_platform\_windows_tz.py weeknumber_platform\_wintray.py generate_holiday_data.py collect_licenses.py country_names.json holiday_data.jsonl timezone_data.json tzd_data.json app.ico) do (
     if not exist "%%F" (
         echo       ERROR: %%F not found.
         goto :DONE
@@ -112,6 +112,13 @@ if not "!ARCH!"=="x64" if not "!ARCH!"=="ARM64" (
     goto :DONE
 )
 
+!PY! -c "import sys; sys.exit(0 if sys.version_info[:2] == (3, 15) else 1)" >nul 2>nul
+if errorlevel 1 (
+    echo       ERROR: !PY_VERSION! found; WeekNumber builds with Python 3.15, the
+    echo       version requirements-release.lock pins every dependency for.
+    goto :DONE
+)
+
 !PY! -c "import tkinter" >nul 2>nul
 if errorlevel 1 (
     echo       ERROR: this Python has no tkinter. Reinstall it from python.org
@@ -141,8 +148,7 @@ if not exist ".venv-build\Scripts\python.exe" (
         goto :DONE
     )
     echo       Installing pinned build dependencies...
-    .venv-build\Scripts\python.exe -m pip install --quiet --upgrade pip
-    .venv-build\Scripts\python.exe -m pip install --quiet -r ..\..\requirements-release.txt
+    .venv-build\Scripts\python.exe -m pip install --quiet --require-hashes --only-binary :all: -r ..\..\requirements-release.lock
     if errorlevel 1 (
         echo       ERROR: dependency install failed. Delete .venv-build and retry.
         goto :DONE
@@ -190,7 +196,7 @@ if errorlevel 1 (
     echo       Fix, either:
     echo         build_exe.bat --venv
     echo       or:
-    echo         !PY! -m pip install "pyinstaller>=6.6,<7" "pillow>=10.1" "pystray>=0.19.5" "holidays==0.106"
+    echo         !PY! -m pip install --require-hashes --only-binary :all: -r ..\..\requirements-release.lock
     goto :DONE
 )
 
@@ -280,7 +286,10 @@ echo       OK
 ::                  not worth a lazy-import break. The macOS
 ::                  backend modules are never imported on Windows.
 ::   Licenses.txt   every license the exe carries, from this
-::                  build's Python; About > Licenses shows it
+::                  build's Python; About > Legal notices shows it
+::   _cffi_backend  PyNaCl's libsodium core imports it from C, where
+::                  PyInstaller cannot see it, and the nacl hook does not
+::                  add it: without it chat would be off
 ::   window modules are imported on first use (the tray loads none
 ::                  at startup); PyInstaller finds those imports, and
 ::                  step 9 checks that every one was packaged
@@ -303,6 +312,7 @@ if errorlevel 1 (
     --add-data "!CD!\build\Licenses.txt;." ^
     --version-file "!VERFILE!" ^
     --optimize 2 --noupx --specpath build ^
+    --hidden-import _cffi_backend ^
     --exclude-module PIL.ImageQt ^
     --exclude-module PyQt5 --exclude-module PyQt6 ^
     --exclude-module PySide2 --exclude-module PySide6 ^
@@ -337,21 +347,14 @@ if errorlevel 1 (
     echo       ERROR: Could not inspect the packaged application archive.
     goto :DONE
 )
-:: Chat's native parts must be packaged wherever cryptography can be
-:: installed; only a native ARM64 build may go without (no wheel).
-set "CRYPTO_MODULES=_rust _cffi_backend"
-!PY! -c "import cryptography.hazmat.primitives.ciphers.aead" >nul 2>nul
+:: Chat's native parts (PyNaCl's libsodium core and cffi's backend) must
+:: be packaged in every build, x64 and ARM64 alike.
+!PY! -c "import nacl.bindings" >nul 2>nul
 if errorlevel 1 (
-    if "!ARCH!"=="ARM64" (
-        set "CRYPTO_MODULES="
-        echo       NOTE: cryptography is not installed for ARM64 - this build
-        echo       has no Timezone Dominator chat. Play and reconnecting work.
-    ) else (
-        echo       ERROR: cryptography is missing; install requirements-release.txt.
-        goto :DONE
-    )
+    echo       ERROR: PyNaCl is missing; install requirements-release.lock.
+    goto :DONE
 )
-for %%R in (weeknumber_calendar weeknumber_timezone_dialog weeknumber_holiday_dialog weeknumber_about weeknumber_license_dialog weeknumber_color_dialog weeknumber_tzd_lobby weeknumber_tzd_dialog weeknumber_tzd_chat weeknumber_tzd_sound weeknumber_platform._windows !CRYPTO_MODULES!) do (
+for %%R in (weeknumber_calendar weeknumber_timezone_dialog weeknumber_holiday_dialog weeknumber_about weeknumber_license_dialog weeknumber_color_dialog weeknumber_tzd_lobby weeknumber_tzd_dialog weeknumber_tzd_chat weeknumber_tzd_sound weeknumber_platform._windows weeknumber_platform._wintray _sodium _cffi_backend) do (
     findstr /i /c:"%%R" "!ARCHIVE_LIST!" >nul
     if errorlevel 1 (
         echo       ERROR: Required packaged module %%R is missing.

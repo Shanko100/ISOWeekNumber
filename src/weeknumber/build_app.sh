@@ -6,7 +6,9 @@
 #    (default)  dist/WeekNumber.app and dist/WeekNumber.dmg with the
 #               current Python
 #    --venv     build inside an isolated .venv-build-mac with the
-#               pinned release dependencies (requirements-release.txt)
+#               hash-pinned release dependencies (requirements-release.lock)
+#
+#  Python: 3.15, the version requirements-release.lock is made for.
 #
 #  Architecture: the app is built for the Python that runs this
 #  script -- arm64 Python gives a native Apple silicon app, x86_64
@@ -63,14 +65,19 @@ if [[ "$USEVENV" == "1" ]]; then
     if [[ ! -x .venv-build-mac/bin/python ]]; then
         echo "      Creating .venv-build-mac..."
         "$PY" -m venv .venv-build-mac
-        .venv-build-mac/bin/python -m pip install --quiet --upgrade pip
-        .venv-build-mac/bin/python -m pip install --quiet -r ../../requirements-release.txt
+        .venv-build-mac/bin/python -m pip install --quiet --require-hashes \
+            --only-binary :all: -r ../../requirements-release.lock
     fi
     PY=.venv-build-mac/bin/python
     echo "      OK - using .venv-build-mac"
 else
     echo "      Using $("$PY" --version) as-is."
 fi
+"$PY" -c "import sys; sys.exit(0 if sys.version_info[:2] == (3, 15) else 1)" || {
+    echo "      ERROR: $("$PY" --version) found; WeekNumber builds with Python 3.15,"
+    echo "      the version requirements-release.lock pins every dependency for."
+    exit 1
+}
 "$PY" -c "import PIL, PyInstaller" 2>/dev/null || {
     echo "      ERROR: Pillow and PyInstaller are required."
     exit 1
@@ -99,11 +106,13 @@ echo "      Version $VERSION"
 echo
 echo "[3/7] Building WeekNumber.app..."
 #   --optimize 2   same as the Windows build: no asserts/docstrings needed
-#   excludes       the Windows backend and pystray never load on macOS; nor
+#   excludes       the Windows backend and tray never load on macOS; nor
 #                  does PyObjC (AppKit goes through _cocoa), even if a
 #                  library mentions it
 #   absolute paths: --specpath makes PyInstaller resolve relative ones in build/
 #   Licenses.txt   every license the bundle carries; About > Legal notices shows it
+#   _cffi_backend  PyNaCl's libsodium core imports it from C, where PyInstaller
+#                  cannot see it, and the nacl hook does not add it
 HERE="$(pwd)"
 mkdir -p build
 "$PY" collect_licenses.py "$HERE/build/Licenses.txt"
@@ -116,9 +125,10 @@ mkdir -p build
     --add-data "$HERE/app.ico:." \
     --add-data "$HERE/build/Licenses.txt:." \
     --optimize 2 --specpath build \
-    --exclude-module pystray \
+    --hidden-import _cffi_backend \
     --exclude-module weeknumber_platform._windows \
     --exclude-module weeknumber_platform._windows_tz \
+    --exclude-module weeknumber_platform._wintray \
     --exclude-module objc --exclude-module AppKit --exclude-module Foundation \
     --exclude-module CoreFoundation \
     --exclude-module PIL.ImageQt --exclude-module PyQt5 --exclude-module PyQt6 \
@@ -166,8 +176,8 @@ for resource in holiday_data.jsonl timezone_data.json tzd_data.json Licenses.txt
         exit 1
     fi
 done
-# Chat's encryption: cryptography's Rust core and cffi's backend are native.
-for library in "_rust*.so" "_cffi_backend*.so"; do
+# Chat's encryption: PyNaCl's libsodium core and cffi's backend are native.
+for library in "_sodium*.so" "_cffi_backend*.so"; do
     if ! find "$APP/Contents" -name "$library" | grep -q .; then
         echo "      ERROR: Required native library $library is missing."
         exit 1

@@ -21,7 +21,7 @@ def board():
 @pytest.fixture(params=["secured", "token"])
 def mode(request, monkeypatch):
     if request.param == "secured" and not chat.available():
-        pytest.skip("cryptography is not installed")
+        pytest.skip("PyNaCl is not installed")
     if request.param == "token":
         monkeypatch.setattr(chat, "available", lambda: False)
     monkeypatch.setattr(net, "RECONNECT_BACKOFF_S", (0.2, 0.3))
@@ -244,7 +244,7 @@ def test_guessing_the_code_from_many_places_is_capped(board, host, mode, monkeyp
     sock.close()
 
 
-@pytest.mark.skipif(not chat.available(), reason="cryptography is not installed")
+@pytest.mark.skipif(not chat.available(), reason="PyNaCl is not installed")
 def test_the_player_checks_that_the_same_host_answered():
     host_keys, guest_keys = chat.KeyPair.generate(), chat.KeyPair.generate()
     host_link = chat.ChatLink(host_keys, guest_keys.public, 1, "host")

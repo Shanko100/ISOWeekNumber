@@ -32,8 +32,14 @@ direction; nonces are the per-direction message counter, which must rise,
 so a replayed or reordered box is refused. Chat text is never written to
 disk or the log.
 
-This module is pure: no Tk, no sockets. `cryptography` is imported on first
-use, so the app starts without it and a missing library only means "Chat
+The primitives come from libsodium through PyNaCl (X25519 and the IETF
+ChaCha20-Poly1305 of RFC 8439); HKDF is RFC 5869 over the standard library's
+HMAC-SHA256. The result is byte for byte what the earlier `cryptography`
+build produced (see test_the_wire_format_is_pinned), so copies built either
+way talk to each other. PyNaCl ships for Windows x64 and ARM64 and for macOS.
+
+This module is pure: no Tk, no sockets. PyNaCl is imported on first use, so
+the app starts without it and a missing library only means "Chat
 unavailable", never plain text.
 """
 
@@ -43,6 +49,7 @@ import base64
 import binascii
 import functools
 import hashlib
+import hmac
 import json
 import threading
 import time
@@ -58,6 +65,8 @@ from weeknumber_core import log, policy
 PROTOCOL = 2
 KEY_BYTES = 32
 KEY_B64_CHARS = 44
+NONCE_BYTES = 12
+TAG_BYTES = 16
 MAX_TEXT_CHARS = 280
 #: Sealed content is padded to a multiple of this, so a box's size gives away
 #: only roughly how long a message is.
@@ -82,23 +91,23 @@ _SAFETY = b"TZD safety v1"
 
 @functools.lru_cache(maxsize=1)
 def _crypto() -> "SimpleNamespace | None":
-    """The cryptography primitives, imported once on first use."""
+    """libsodium's primitives through PyNaCl, imported once on first use."""
     try:
-        from cryptography.exceptions import InvalidTag
-        from cryptography.hazmat.primitives import hashes, serialization
-        from cryptography.hazmat.primitives.asymmetric.x25519 import (
-            X25519PrivateKey,
-            X25519PublicKey,
-        )
-        from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
-        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        from nacl import bindings, exceptions
+        if (bindings.crypto_scalarmult_BYTES != KEY_BYTES
+                or bindings.crypto_aead_chacha20poly1305_ietf_KEYBYTES != KEY_BYTES
+                or bindings.crypto_aead_chacha20poly1305_ietf_NPUBBYTES != NONCE_BYTES):
+            raise ImportError("unexpected libsodium parameters")
     except Exception:
-        log.warning("The cryptography library is unavailable; chat is off")
+        log.warning("The PyNaCl library is unavailable; chat is off")
         return None
     return SimpleNamespace(
-        InvalidTag=InvalidTag, hashes=hashes, serialization=serialization,
-        X25519PrivateKey=X25519PrivateKey, X25519PublicKey=X25519PublicKey,
-        ChaCha20Poly1305=ChaCha20Poly1305, HKDF=HKDF)
+        scalarmult=bindings.crypto_scalarmult,
+        scalarmult_base=bindings.crypto_scalarmult_base,
+        seal=bindings.crypto_aead_chacha20poly1305_ietf_encrypt,
+        unseal=bindings.crypto_aead_chacha20poly1305_ietf_decrypt,
+        random=bindings.randombytes,
+        Error=exceptions.CryptoError)
 
 
 def available() -> bool:
@@ -106,23 +115,38 @@ def available() -> bool:
     return not policy().disable_chat and _crypto() is not None
 
 
+def hkdf_sha256(secret: bytes, salt: bytes, info: bytes, length: int) -> bytes:
+    """HKDF (RFC 5869) with HMAC-SHA256: extract, then expand to `length`
+    bytes. Checked against the RFC's test vectors in test_tzd_chat."""
+    if not 0 < length <= 255 * hashlib.sha256().digest_size:
+        raise ValueError("invalid HKDF length")
+    key = hmac.digest(salt or bytes(hashlib.sha256().digest_size), secret, "sha256")
+    out, block, counter = b"", b"", 1
+    while len(out) < length:
+        block = hmac.digest(key, block + info + bytes((counter,)), "sha256")
+        out += block
+        counter += 1
+    return out[:length]
+
+
 class KeyPair:
     """An X25519 key pair; the private half never leaves this object."""
 
-    def __init__(self, private) -> None:
-        crypto = _crypto()
+    def __init__(self, private: bytes) -> None:
+        if not isinstance(private, bytes) or len(private) != KEY_BYTES:
+            raise ValueError("an X25519 private key is 32 bytes")
         self._private = private
-        self.public = private.public_key().public_bytes(
-            crypto.serialization.Encoding.Raw, crypto.serialization.PublicFormat.Raw)
+        self.public = _crypto().scalarmult_base(private)
 
     @classmethod
     def generate(cls) -> "KeyPair":
-        return cls(_crypto().X25519PrivateKey.generate())
+        """A fresh key from the OS's random source (libsodium's randombytes)."""
+        return cls(_crypto().random(KEY_BYTES))
 
     @classmethod
     def from_private_bytes(cls, data: bytes) -> "KeyPair":
         """For tests: a fixed key gives reproducible boxes."""
-        return cls(_crypto().X25519PrivateKey.from_private_bytes(data))
+        return cls(bytes(data))
 
     @property
     def public_b64(self) -> str:
@@ -130,13 +154,34 @@ class KeyPair:
 
     def exchange(self, peer_public: bytes) -> "bytes | None":
         """The shared secret, or None for a key that yields no secret (the
-        low-order points X25519 maps to all zeros)."""
-        crypto = _crypto()
-        try:
-            shared = self._private.exchange(crypto.X25519PublicKey.from_public_bytes(peer_public))
-        except ValueError:
+        low-order points X25519 maps to all zeros, which libsodium refuses)."""
+        if not isinstance(peer_public, bytes) or len(peer_public) != KEY_BYTES:
             return None
-        return None if shared == bytes(KEY_BYTES) else shared
+        try:
+            shared = _crypto().scalarmult(self._private, peer_public)
+        except Exception:
+            return None
+        return None if hmac.compare_digest(shared, bytes(KEY_BYTES)) else shared
+
+
+class _Aead:
+    """ChaCha20-Poly1305 (IETF) with one fixed key: box = ciphertext + tag."""
+
+    __slots__ = ("_key", "_seal", "_unseal")
+
+    def __init__(self, key: bytes) -> None:
+        if len(key) != KEY_BYTES:
+            raise ValueError("a ChaCha20-Poly1305 key is 32 bytes")
+        crypto = _crypto()
+        self._key, self._seal, self._unseal = key, crypto.seal, crypto.unseal
+
+    def encrypt(self, nonce: bytes, plain: bytes, aad: bytes) -> bytes:
+        return self._seal(plain, aad, nonce, self._key)
+
+    def decrypt(self, nonce: bytes, box: bytes, aad: bytes) -> bytes:
+        if len(box) < TAG_BYTES:
+            raise ValueError("box shorter than its tag")
+        return self._unseal(box, aad, nonce, self._key)
 
 
 def parse_public_key(value: object, own: "bytes | None" = None) -> "bytes | None":
@@ -178,15 +223,15 @@ class ChatLink:
             host_public, guest_public = own.public, peer_public
         else:
             host_public, guest_public = peer_public, own.public
-        keys = crypto.HKDF(
-            algorithm=crypto.hashes.SHA256(), length=2 * KEY_BYTES, salt=_SALT,
-            info=b"keys" + host_public + guest_public + seat_id.to_bytes(4, "big"),
-        ).derive(shared)
+        keys = hkdf_sha256(
+            shared, _SALT,
+            b"keys" + host_public + guest_public + seat_id.to_bytes(4, "big"),
+            2 * KEY_BYTES)
         to_guest, to_host = keys[:KEY_BYTES], keys[KEY_BYTES:]
         send, receive = (to_guest, to_host) if role == "host" else (to_host, to_guest)
-        self._sender = crypto.ChaCha20Poly1305(send)
-        self._receiver = crypto.ChaCha20Poly1305(receive)
-        self._invalid = crypto.InvalidTag
+        self._sender = _Aead(send)
+        self._receiver = _Aead(receive)
+        self._invalid = crypto.Error
         self.host_public = host_public
         self.send_lock = threading.Lock()
         self._next = 0
@@ -206,7 +251,8 @@ class ChatLink:
         plain += b" " * (-len(plain) % PAD_BYTES)
         n = self._next
         self._next += 1
-        box = self._sender.encrypt(n.to_bytes(12, "big"), plain, _AAD + kind.encode("ascii"))
+        box = self._sender.encrypt(n.to_bytes(NONCE_BYTES, "big"), plain,
+                                   _AAD + kind.encode("ascii"))
         return {"n": n, "box": base64.b64encode(box).decode("ascii")}
 
     def open(self, kind: str, n: object, box: object) -> "dict | None":
@@ -226,7 +272,8 @@ class ChatLink:
             return None
         try:
             raw = base64.b64decode(box, validate=True)
-            plain = self._receiver.decrypt(n.to_bytes(12, "big"), raw, _AAD + kind.encode("ascii"))
+            plain = self._receiver.decrypt(n.to_bytes(NONCE_BYTES, "big"), raw,
+                                           _AAD + kind.encode("ascii"))
             payload = json.loads(plain.decode("utf-8"))
         except (binascii.Error, ValueError, UnicodeDecodeError, self._invalid):
             return None

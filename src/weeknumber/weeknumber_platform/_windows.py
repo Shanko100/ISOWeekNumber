@@ -16,7 +16,7 @@ import ctypes
 
 # Harden the DLL search path to System32 BEFORE importing anything that loads
 # native extensions or their dependent DLLs (tkinter -> Tcl/Tk, Pillow,
-# pystray, hashlib -> OpenSSL). This removes the loading directory, the current
+# PyNaCl -> libsodium, hashlib -> OpenSSL). This removes the loading directory, the current
 # working directory and PATH from the default search, so a DLL planted next to
 # the .exe in a writable directory cannot be loaded in place of the genuine
 # system copy. kernel32 is a KnownDLL -- section-mapped, never path-searched --

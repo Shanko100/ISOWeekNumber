@@ -145,7 +145,7 @@ class CalendarPopup:
         """Re-render the open popup in place after settings-backed display data
         changes. Usually a no-op: opening the tray menu drops the popup's focus,
         which closes it first. Still keep the live path correct because tray
-        menu focus behaviour varies across Windows/Pystray versions."""
+        menu focus behaviour varies across Windows versions."""
         inst = cls._instance
         if inst is None:
             return

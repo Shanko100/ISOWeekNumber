@@ -363,7 +363,7 @@ def test_the_relay_advertises_chat(board):
 def test_encrypted_chat_works_online(board):
     import weeknumber_tzd_chat as chat
     if not chat.available():
-        pytest.skip("cryptography is not installed")
+        pytest.skip("PyNaCl is not installed")
     host_inbox = Inbox()
     host = net.LobbyHost(board, "Hostess", "Chat test", host_inbox,
                          transport=relay.RelayHostTransport())

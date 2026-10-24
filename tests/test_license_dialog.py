@@ -59,7 +59,7 @@ def test_the_sections_of_a_real_build_file(monkeypatch, tmp_path):
     assert titles[0].startswith("WeekNumber ")
     assert titles[0].endswith(" - legal notices and licenses")
     assert titles[1] == "Legal notices"
-    for expected in ("WeekNumber: LICENSE", "Third-party notices", "pystray source",
+    for expected in ("WeekNumber: LICENSE", "Third-party notices", "licenses/libsodium-ISC.txt",
                      "Tk (from the build's Python)", "Build environment"):
         assert expected in titles
     assert dict(sections)["Tk (from the build's Python)"] == "Tk license text"

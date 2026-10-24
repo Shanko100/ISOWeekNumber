@@ -5,9 +5,11 @@ ISO week number. It runs as the signed-in user and never asks for elevation.
 
 ## Install
 
-- **Windows:** deploy `WeekNumber.exe` to `C:\Program Files\WeekNumber`, where
-  only administrators can change it. Users without admin rights can run it
-  from `%LOCALAPPDATA%\Programs\WeekNumber` instead.
+- **Windows:** deploy `WeekNumber.exe` (x64; also runs on Windows 11 on ARM)
+  or the native `WeekNumber-arm64.exe` to
+  `C:\Program Files\WeekNumber`, where only administrators can change it.
+  Users without admin rights can run it from
+  `%LOCALAPPDATA%\Programs\WeekNumber` instead.
 - **macOS:** deploy `WeekNumber.app`, from `WeekNumber.dmg`, to
   `/Applications`. The 1.0 build is ad-hoc signed, not notarized; allow it
   through your management tool or sign it with your own Developer ID.

@@ -10,8 +10,8 @@ cannot touch the network unless you allow it, each time.
 | File | For |
 |---|---|
 | `WeekNumber.exe` | Windows 10 and 11 on x64; also runs on Windows 11 on ARM |
+| `WeekNumber-arm64.exe` | Windows 11 on ARM, native |
 | `WeekNumber.dmg` | macOS 12 or later on Apple silicon (M1 or newer) |
-| `pystray-0.19.5.tar.gz` | Source of pystray, the LGPL-licensed tray library inside `WeekNumber.exe` |
 
 The legal notices and the licenses of everything inside each app are under
 **About → Legal notices**.
@@ -57,10 +57,10 @@ Anyway** (on macOS 14 and earlier, Control-click the app and choose
 
 ## For builders
 
-- `build_exe.bat` builds for the running Python's architecture (x64 or
-  ARM64) and refuses 32-bit Python. `cryptography` has no Windows ARM64
-  wheel, so `requirements-release.txt` skips it there and a native ARM64 exe
-  has no encrypted chat; the x64 exe runs on Windows 11 on ARM with it.
+- Built with Python 3.15 from `requirements-release.lock`, which pins every
+  dependency with its hash. `build_exe.bat` builds for the running Python's
+  architecture (x64 or ARM64) and refuses 32-bit Python; both exes have
+  encrypted chat (PyNaCl and libsodium).
 - `build_app.sh` builds `WeekNumber.app` and `WeekNumber.dmg`, reports the
   architecture and warns about an x86_64 Python under Rosetta.
 - Both scripts bundle `Licenses.txt`, written by `collect_licenses.py` with

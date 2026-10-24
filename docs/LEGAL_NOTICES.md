@@ -16,14 +16,10 @@ country gives you and that cannot be waived.
 ## Third-party software and data
 
 WeekNumber includes software and data made by others, such as Python,
-Tcl/Tk, Pillow, pystray (Windows), holiday data from the holidays library,
-time-zone data from Unicode CLDR and the IANA tz database, and map outlines
-from Natural Earth. Each keeps its own license. They are listed under
-"Third-party notices", and their complete license texts follow.
-
-pystray is licensed under the LGPL-3.0. You may replace it with a modified
-version: the "pystray source" section says where its source and
-WeekNumber's build scripts are.
+Tcl/Tk, Pillow, PyNaCl and libsodium, holiday data from the holidays
+library, time-zone data from Unicode CLDR and the IANA tz database, and map
+outlines from Natural Earth. Each keeps its own license. They are listed
+under "Third-party notices", and their complete license texts follow.
 
 ## Trademarks
 
@@ -86,7 +82,7 @@ own relay, by policy (docs/ADMINISTRATION.md in the repository).
 
 WeekNumber contains encryption software: TLS for the connection to the
 relay, and X25519, HKDF-SHA256 and ChaCha20-Poly1305 (through the
-open-source cryptography library and OpenSSL) for chat. It uses only
+open-source PyNaCl and libsodium libraries) for chat. It uses only
 publicly available, standard algorithms. Some countries regulate the
 import, use or export of encryption software; you are responsible for
 following the rules where you use or pass on WeekNumber.

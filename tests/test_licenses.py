@@ -33,7 +33,9 @@ def test_every_license_text_that_applies_is_included(target):
         assert (f"licenses/{path.name}\n" in text) == (path.name not in skipped), path.name
 
 
-def test_only_the_windows_build_carries_pystray():
-    windows, mac = collect_licenses.build("win32"), collect_licenses.build("darwin")
-    assert "\npystray source\n" in windows and "\nlicenses/pystray-LGPL-3.0.txt\n" in windows
-    assert "\npystray source\n" not in mac and "\nlicenses/pystray-LGPL-3.0.txt\n" not in mac
+def test_both_builds_carry_the_chat_libraries_and_no_lgpl_code():
+    for target in ("win32", "darwin"):
+        text = collect_licenses.build(target)
+        assert "\nlicenses/PyNaCl-Apache-2.0.txt\n" in text
+        assert "\nlicenses/libsodium-ISC.txt\n" in text
+        assert "pystray" not in text.lower() and "LGPL-3.0" not in text

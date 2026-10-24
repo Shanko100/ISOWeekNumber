@@ -13,7 +13,7 @@ import weeknumber_tzd_net as net
 import weeknumber_tzd_rules as rules
 from test_tzd_net import Inbox, free_udp_port
 
-pytestmark = pytest.mark.skipif(not chat.available(), reason="cryptography is not installed")
+pytestmark = pytest.mark.skipif(not chat.available(), reason="PyNaCl is not installed")
 
 
 @pytest.fixture(scope="module")

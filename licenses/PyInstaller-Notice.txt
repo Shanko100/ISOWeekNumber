@@ -6,6 +6,6 @@ PyInstaller is distributed under GPL-2.0-or-later with a special exception
 that permits distributing bundled applications under another license, subject
 to the licenses of the bundled application and all bundled dependencies.
 
-PyInstaller's exception does not relicense pystray, Pillow, CPython, Tcl/Tk,
+PyInstaller's exception does not relicense Pillow, PyNaCl, CPython, Tcl/Tk,
 or any other bundled component. Consult the COPYING.txt file shipped with the
 exact PyInstaller version used for the build.

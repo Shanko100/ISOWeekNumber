@@ -1,7 +1,8 @@
 """Core infrastructure for WeekNumber.
 
-Requirements: Windows 10+ or macOS 12+, Python 3.11+, pystray (Windows),
-Pillow. macOS needs nothing more: AppKit is reached through ctypes.
+Requirements: Windows 10+ or macOS 12+, Python 3.15, Pillow. The Windows
+tray icon (weeknumber_platform._wintray) and the macOS menu-bar item reach
+the OS through ctypes; chat uses PyNaCl when it is installed.
 
 Design notes
 ------------
@@ -16,7 +17,7 @@ Design notes
 * The calendar grid is built once per popup; month navigation only
   reconfigures label text/colours.
 * This module deliberately owns only shared, GUI-toolkit-agnostic
-  infrastructure. Tk, pystray and Pillow are imported by the modules that
+  infrastructure. Tk and Pillow are imported by the modules that
   use them, so each file's dependency surface is explicit and analysable.
 """
 
@@ -338,7 +339,7 @@ def read_bounded_text(path: Path, max_bytes: int) -> str:
 class UiDispatcher:
     """Runs callables on the Tk thread on behalf of any thread.
 
-    Worker threads (pystray, the eviction waiter, Timezone Dominator sockets) only append
+    Worker threads (the tray, the eviction waiter, Timezone Dominator sockets) only append
     to a thread-safe queue; a short `after` timer on the Tk thread drains it.
     No Tcl call is ever made off the Tk thread. Calling `after` from another
     thread works on Windows but does not wake Aqua's Cocoa run loop on macOS,
@@ -491,7 +492,7 @@ class ModuleSweeper:
 
     * native extension modules, and every module of a package that contains
       one: a native module cannot be unloaded, and it may cache the package's
-      Python classes (cryptography's Rust core raises its own InvalidTag), so
+      Python classes (PyNaCl's libsodium core raises its own CryptoError), so
       a fresh copy of the package beside the old native one could break
       `except` clauses;
     * modules without a normal file loader (built-in, frozen stdlib, entries
@@ -507,7 +508,7 @@ class ModuleSweeper:
     KEEP = frozenset((
         "weeknumber", "weeknumber_core", "weeknumber_platform", "weeknumber_tray",
         "weeknumber_timezone", "weeknumber_menubar",
-        "tkinter", "_tkinter", "PIL", "pystray", "six",
+        "tkinter", "_tkinter", "PIL", "six",
         "encodings", "codecs", "importlib", "zipimport", "ctypes", "_ctypes",
         "logging", "threading", "subprocess", "signal", "atexit", "weakref",
         "multiprocessing", "concurrent", "asyncio", "locale", "gc", "site",
@@ -703,13 +704,10 @@ network = NetworkGate()
 
 
 def tray_callback(func):
-    """Error barrier for pystray-thread callbacks (uncaught exceptions there
-    die silently) with a fixed (self, icon, item) arity.
-
-    The arity is load-bearing: pystray validates actions via raw
-    ``__code__.co_argcount``, which neither counts ``*args`` nor follows
-    functools.wraps' ``__wrapped__``. A ``*args`` wrapper yields argcount -1
-    for a bound method and pystray rejects it with ValueError at startup."""
+    """Error barrier for tray menu callbacks, which run on the tray thread
+    on Windows (an uncaught exception there would only reach the log as a
+    window-procedure failure). The menu calls them without arguments; the
+    optional (icon, item) pair stays for callers that pass them."""
     @functools.wraps(func)
     def wrapper(self, icon=None, item=None):
         try:

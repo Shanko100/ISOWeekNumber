@@ -74,7 +74,8 @@ native feel.
 ### 🪟 Windows
 
 1. Open the [GitHub Releases](https://github.com/Shanko100/ISOWeekNumber/releases) page.
-2. Download **`WeekNumber.exe`** from the latest release.
+2. Download **`WeekNumber.exe`** from the latest release, or
+   **`WeekNumber-arm64.exe`** for a native build on Windows 11 on ARM.
 3. Move it to one of these locations:
    - 🏢 `C:\Program Files\WeekNumber` — needs administrator rights.
    - 👤 `%LOCALAPPDATA%\Programs\WeekNumber` — works without administrator rights.
@@ -147,16 +148,15 @@ WeekNumber runs all day, so it tries hard to stay out of your way:
 
 ### 📦 Packaged application
 
-- **Windows:** Windows 10 or 11 on x64, and Windows 11 on ARM — the x64
-  build runs there with every feature; a native ARM64 build works too,
-  without encrypted chat
+- **Windows:** Windows 10 or 11 on x64, and Windows 11 on ARM — natively with
+  `WeekNumber-arm64.exe`, or emulated with the x64 build; both have every
+  feature
 - **macOS:** macOS 12 or newer on Apple silicon
 
 ### 🐍 Running from source
 
 - Windows 10/11 or macOS 12+
-- Python 3.11+
-- On macOS: a python.org Python build with Tk 8.6
+- Python 3.15 with Tcl/Tk (the python.org installers include it)
 
 ## 🧑‍💻 Run from source
 
@@ -164,8 +164,7 @@ WeekNumber runs all day, so it tries hard to stay out of your way:
 <summary><strong>🪟 Windows</strong></summary>
 
 ```powershell
-py -3.11 -m venv .venv
-.venv\Scripts\python -m pip install --upgrade pip
+py -3.15 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements-dev.txt
 .venv\Scripts\python src\weeknumber\weeknumber.py
 ```
@@ -176,8 +175,7 @@ py -3.11 -m venv .venv
 <summary><strong>🍎 macOS</strong></summary>
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
+python3.15 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python src/weeknumber/weeknumber.py
 ```
@@ -206,12 +204,11 @@ network-protocol tests are portable; macOS backend tests are skipped on Windows.
 <details>
 <summary><strong>🪟 Build the Windows executable</strong></summary>
 
-Create a clean environment with the pinned release dependencies:
+Create a clean environment with the hash-pinned release dependencies:
 
 ```powershell
-py -3.11 -m venv .venv-build
-.venv-build\Scripts\python -m pip install --upgrade pip
-.venv-build\Scripts\python -m pip install -r requirements-release.txt
+py -3.15 -m venv .venv-build
+.venv-build\Scripts\python -m pip install --require-hashes --only-binary :all: -r requirements-release.lock
 .venv-build\Scripts\activate
 cd src\weeknumber
 build_exe.bat --nopause
@@ -224,11 +221,10 @@ src\weeknumber\dist\WeekNumber.exe
 ```
 
 The exe matches the Python that builds it: x64 Python gives an x64 exe
-(which also runs on Windows 11 on ARM), ARM64 Python a native ARM64 exe
-without encrypted chat. 32-bit Python is refused.
-
-For a public release, use `requirements-release.txt` rather than
-`build_exe.bat --venv`; the release requirements pin exact dependency versions.
+(which also runs on Windows 11 on ARM), ARM64 Python a native ARM64 exe.
+32-bit Python is refused. `build_exe.bat --venv` creates the same clean
+environment itself. The `build` workflow in GitHub Actions builds the x64 and
+ARM64 exes and the disk image the same way.
 
 </details>
 
@@ -236,8 +232,8 @@ For a public release, use `requirements-release.txt` rather than
 <summary><strong>🍎 Build the macOS application</strong></summary>
 
 ```sh
-python3 -m venv .venv-build
-.venv-build/bin/python -m pip install -r requirements-release.txt
+python3.15 -m venv .venv-build
+.venv-build/bin/python -m pip install --require-hashes --only-binary :all: -r requirements-release.lock
 cd src/weeknumber
 PYTHON=../../.venv-build/bin/python ./build_app.sh
 ```
@@ -311,7 +307,8 @@ ISOWeekNumber/
 - Settings are validated and written through a temporary file before replacement.
 - Bundled data files and the license texts are read size-capped and validated,
   never executed.
-- Release dependencies are pinned in `requirements-release.txt`.
+- Release dependencies, indirect ones included, are pinned with their hashes
+  in `requirements-release.lock`.
 - Data and asset provenance is recorded in
   [docs/PROVENANCE.md](docs/PROVENANCE.md).
 - Report suspected vulnerabilities through the

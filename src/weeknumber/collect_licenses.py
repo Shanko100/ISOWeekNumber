@@ -38,23 +38,14 @@ ROOT = HERE.parents[1]
 LICENSES = ROOT / "licenses"
 
 #: License texts for components that one platform's build never bundles.
-NOT_BUNDLED = {
-    "darwin": {"pystray-LGPL-3.0.txt", "GPL-3.0.txt"},
+NOT_BUNDLED: "dict[str, set[str]]" = {
+    "darwin": set(),
     "win32": set(),
 }
-#: Taken from the build interpreter instead (below); licenses/ holds Tcl's
-#: text only because Python for Windows ships Tk's copy but not Tcl's.
-FROM_BUILD = {"Tcl-license.terms"}
-
-PYSTRAY_SOURCE = """\
-pystray is licensed under the LGPL-3.0. Its complete source is the release
-asset pystray-0.19.5.tar.gz. To use a modified pystray, install it into the
-build environment and rebuild with src/weeknumber/build_exe.bat; the
-complete WeekNumber source for this release, the build scripts and the
-pinned dependency versions (requirements-release.txt) are in the GitHub
-repository at the release's tag.
-"""
-
+#: Taken from the build interpreter instead (below). licenses/ holds these
+#: only as fallbacks: Python for Windows ships Tk's text but not Tcl's, and
+#: the python.org macOS framework ships Tcl's but not Tk's.
+FROM_BUILD = {"Tcl-license.terms", "Tk-license.terms"}
 
 def _version() -> str:
     source = (HERE / "weeknumber_core.py").read_text(encoding="utf-8")
@@ -106,8 +97,9 @@ def _interpreter_licenses() -> "list[tuple[str, Path]]":
     tcl = _first([library / "license.terms", library.parent / "license.terms",
                   LICENSES / "Tcl-license.terms"])
     tk_framework = Path(str(library).replace("Tcl.framework", "Tk.framework"))
-    tk = _first([library.parent / f"tk{tkinter.TkVersion}" / "license.terms",
-                 tk_framework.parent / "license.terms"]) or _search_tk(base, library)
+    tk = (_first([library.parent / f"tk{tkinter.TkVersion}" / "license.terms",
+                  tk_framework.parent / "license.terms"])
+          or _search_tk(base, library) or _first([LICENSES / "Tk-license.terms"]))
     found = [("CPython", cpython), ("Tcl", tcl), ("Tk", tk)]
     missing = [name for name, path in found if path is None]
     if missing:
@@ -153,8 +145,6 @@ def build(target: str = sys.platform) -> str:
            "components this build bundles with their licenses, and those of the\n"
            "Python, Tcl and Tk the build was made with.\n\n\n"]
     out += [section(name, text) for name, text in repository_sections(target)]
-    if target == "win32":
-        out.append(section("pystray source", PYSTRAY_SOURCE))
     for name, path in _interpreter_licenses():
         out.append(section(f"{name} (from the build's Python)",
                             path.read_text(encoding="utf-8", errors="replace")))

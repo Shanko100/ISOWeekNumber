@@ -1,8 +1,8 @@
 """macOS menu-bar extra for WeekNumber.
 
-pystray cannot be used here: its macOS backend runs its own NSApplication
-loop on the main thread, which is where Tk's Aqua loop must run too. Instead
-this creates an ``NSStatusItem`` on the Tk main thread after the root exists;
+A tray library cannot be used here: macOS backends run their own
+NSApplication loop on the main thread, which is where Tk's Aqua loop must run
+too. Instead this creates an ``NSStatusItem`` on the Tk main thread after the root exists;
 Tk's mainloop already pumps the Cocoa events, so clicks and menu actions
 arrive on the main thread with no marshalling. AppKit is reached through the
 small ctypes bridge in ``weeknumber_platform._cocoa``.

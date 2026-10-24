@@ -34,6 +34,7 @@ PROGRAM_FILES = [
     "weeknumber_platform/_common.py",
     "weeknumber_platform/_windows.py",
     "weeknumber_platform/_windows_tz.py",
+    "weeknumber_platform/_wintray.py",
     "weeknumber_platform/_macos.py",
     "weeknumber_platform/_cocoa.py",
     "weeknumber_platform/_macos_tz.py",

@@ -1,17 +1,16 @@
-# Exact versions checked on 2026-10-18.
-# Install these before invoking build_exe.bat or build_app.sh without --venv.
+# Exact versions checked on 2026-10-24, for Python 3.15.
+# The release builds install requirements-release.lock, which pins these and
+# every indirect dependency with hashes; regenerate it after editing this file.
 PyInstaller==6.22.3
 Pillow==13.0.0
 holidays==0.106
 # Online Timezone Dominator lobbies: WebSockets to the relay, TLS checked against the OS trust store.
 websocket-client==1.9.2
 truststore==0.10.5
-# End-to-end encrypted Timezone Dominator chat (X25519, ChaCha20-Poly1305); cffi and
-# pycparser are its dependencies, pinned for reproducible builds.
-# cryptography publishes no Windows ARM64 wheel (checked 2026-10-21), so a
-# native ARM64 Windows build goes without chat; an x64 build has it and also
-# runs on Windows 11 on ARM.
-cryptography==50.0.2; sys_platform != "win32" or platform_machine != "ARM64"
-cffi==2.1.1; sys_platform != "win32" or platform_machine != "ARM64"
-pycparser==3.11; sys_platform != "win32" or platform_machine != "ARM64"
-pystray==0.19.5; sys_platform == "win32"
+# End-to-end encrypted Timezone Dominator chat (X25519, ChaCha20-Poly1305)
+# through libsodium. PyNaCl publishes wheels for Windows x64 and ARM64 and for
+# macOS, so every build has chat; cffi and pycparser are its dependencies,
+# pinned for reproducible builds.
+PyNaCl==1.6.2
+cffi==2.1.1
+pycparser==3.11

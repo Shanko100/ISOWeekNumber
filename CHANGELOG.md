@@ -61,12 +61,19 @@ The first public release.
 
 ### Platforms and build
 
-- Windows 10 and 11 on x64 (also runs on Windows 11 on ARM) and macOS 12+ on
-  Apple silicon.
+- Windows 10 and 11 on x64, Windows 11 on ARM (native ARM64 exe, or the x64
+  one emulated) and macOS 12+ on Apple silicon, all with every feature.
+- Built with Python 3.15. `requirements-release.lock` pins every dependency,
+  indirect ones included, with its hash; the `build` workflow builds the x64
+  and ARM64 exes and the disk image from it.
+- The Windows tray icon talks to the Win32 API directly
+  (`weeknumber_platform._wintray`): no third-party tray library, and the icon
+  is built in memory, so nothing is written to disk.
+- Chat encryption uses PyNaCl and libsodium, which ship for every platform
+  the app supports.
 - `build_exe.bat` builds for the running Python's architecture and refuses
-  32-bit Python; a native ARM64 build has no encrypted chat, because
-  `cryptography` publishes no Windows ARM64 wheel. `build_app.sh` builds the
-  app and `WeekNumber.dmg`, and warns about Rosetta.
+  32-bit Python. `build_app.sh` builds the app and `WeekNumber.dmg`, and
+  warns about Rosetta.
 - Both builds bundle `Licenses.txt`, written by `collect_licenses.py` from
   the build's own environment.
 - The online relay is a Cloudflare Worker in `relay/`.
