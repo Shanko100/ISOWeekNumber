@@ -84,6 +84,9 @@ WEEKNUMBER_TZD_RELAY=http://127.0.0.1:8787 python src/weeknumber/weeknumber.py
 WEEKNUMBER_TZD_RELAY=http://127.0.0.1:8787 python -m pytest tests/test_tzd_relay.py
 ```
 
+The app takes a plain `http://` address only for a relay on the same
+machine (`localhost`, `127.0.0.1`, `::1`); any other relay needs `https://`.
+
 ## Deploy
 
 ```sh
