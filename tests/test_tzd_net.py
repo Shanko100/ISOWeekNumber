@@ -85,6 +85,27 @@ def test_wrong_code_is_refused(board, host):
     assert intruder.inbox.wait("closed") == "Wrong lobby code."
 
 
+def test_a_code_with_other_characters_is_refused_and_counted(board, host):
+    # hmac.compare_digest raises TypeError for non-ASCII text; the attempt
+    # must still be answered and counted like any wrong code.
+    intruder = join(board, host, "Mallory", code="\u0661\u0662\u0663\u0664")
+    assert intruder.inbox.wait("closed") == "Wrong lobby code."
+    assert host._failure_total == 1
+
+
+@pytest.mark.parametrize("given, expected, same", [
+    ("1234", "1234", True),
+    ("1235", "1234", False),
+    ("\u00e9", "1234", False),
+    ("\ud800", "1234", False),   # a lone surrogate, which JSON can carry
+    (None, "1234", False),
+    (["1234"], "1234", False),
+    ("1234", None, False),
+])
+def test_same_secret(given, expected, same):
+    assert net._same_secret(given, expected) is same
+
+
 def test_different_board_is_refused(board, host):
     inbox = Inbox()
     other = rules.Board.from_document(_modified_board_document())

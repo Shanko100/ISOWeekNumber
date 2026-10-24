@@ -138,6 +138,16 @@ def clean_name(value: object, fallback: str = "Player") -> str:
     return text or fallback
 
 
+def _same_secret(given: object, expected: object) -> bool:
+    """Constant-time comparison of a code or token from the wire. Compared as
+    UTF-8 bytes: hmac.compare_digest raises TypeError for a str with
+    non-ASCII characters, which would end the handshake thread without
+    counting the attempt."""
+    return (isinstance(given, str) and isinstance(expected, str)
+            and hmac.compare_digest(given.encode("utf-8", "surrogatepass"),
+                                    expected.encode("utf-8")))
+
+
 def encode(message: dict) -> bytes:
     payload = dict(message)
     payload["v"] = PROTOCOL_VERSION
@@ -618,8 +628,7 @@ class LobbyHost:
         if hello.get("board") != self.board.fingerprint:
             conn.send({"type": "bye", "reason": "That host runs a different WeekNumber version."})
             return None
-        if self.code is not None and not (isinstance(hello.get("code"), str) and
-                                          hmac.compare_digest(hello["code"], self.code)):
+        if self.code is not None and not _same_secret(hello.get("code"), self.code):
             self._failed(conn, address, "Wrong lobby code.")
             return None
         if "resume" in hello:
@@ -694,9 +703,7 @@ class LobbyHost:
                     proven = (isinstance(box, dict) and box.get("k") == "resume"
                               and box.get("player") == pid)
                 else:
-                    token, expected = resume.get("token"), seat.get("token")
-                    proven = (isinstance(token, str) and isinstance(expected, str)
-                              and hmac.compare_digest(token, expected))
+                    proven = _same_secret(resume.get("token"), seat.get("token"))
             if usable and proven:
                 old, seat["conn"] = seat["conn"], conn
                 seat["away"] = None
@@ -1081,7 +1088,7 @@ class LobbyClient:
         elif kind == "state":
             try:
                 state = rules.GameState.from_dict(message.get("state"), self.board)
-            except ValueError:
+            except (ValueError, TypeError, KeyError):
                 log.warning("Ignoring an invalid Timezone Dominator state from the host")
                 return
             self._in_game = True
