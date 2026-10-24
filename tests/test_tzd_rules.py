@@ -116,6 +116,11 @@ def test_capture_requires_occupation_with_dice_count(board):
     {"type": "place", "t": "alaska", "n": 1},                              # wrong phase
     {"type": "teleport"},
     "attack",
+    # Lists and objects are unhashable: refused, not a TypeError.
+    {"type": "attack", "from": ["alaska"], "to": "kamchatka", "dice": 1},
+    {"type": "attack", "from": "alaska", "to": {"t": "kamchatka"}, "dice": 1},
+    {"type": "fortify", "from": "alaska", "to": [], "n": 1},
+    {"type": "blitz", "from": {}, "to": "kamchatka"},
 ])
 def test_illegal_actions_are_rejected_without_side_effects(board, action):
     state = make_state(board, {"alaska": 0, "kamchatka": 1}, {"alaska": 3, "kamchatka": 2})
@@ -261,6 +266,13 @@ def test_client_view_is_redacted_and_round_trips(board):
     lambda d: d.pop("owner"),
     lambda d: d["players"][0].update(name="x" * 200),
     lambda d: d.update(current=True),
+    # Unhashable values where an id belongs: ValueError, never TypeError.
+    lambda d: d["owner"].update(alaska=[0]),
+    lambda d: d["owner"].update(alaska={"id": 0}),
+    lambda d: d.update(winner=[0]),
+    lambda d: d.update(occupy={"from": ["alaska"], "to": "kamchatka", "min": 1, "max": 1}),
+    lambda d: d.update(deck=[{"s": ["infantry"], "t": "alaska"}]),
+    lambda d: d["players"][0].update(cards=[{"s": "infantry", "t": {}}]),
 ])
 def test_from_dict_rejects_malformed_state(board, mutate):
     state = rules.new_game(board, [(0, "A", 0), (1, "B", 1)], random.Random(2))
@@ -292,7 +304,11 @@ def _random_legal_action(board, state, rng):
         n = step["max"] if rng.random() < 0.8 else rng.randint(step["min"], step["max"])
         return {"type": "occupy", "n": n}
     if state.phase == rules.PHASE_ATTACK:
-        options = [(s, t) for s in own for t in rules.attack_targets(board, state, s)
+        # Sorted: max() keeps the first of equal options, and a set's order
+        # changes with the hash seed of each run, so unsorted the same seed
+        # played a different game every run (and about one in a thousand
+        # ran past the move limit).
+        options = [(s, t) for s in own for t in sorted(rules.attack_targets(board, state, s))
                    if state.armies[s] > state.armies[t] + 1]
         if options:
             source, target = max(options, key=lambda o: state.armies[o[0]] - state.armies[o[1]])
@@ -382,3 +398,13 @@ def test_the_last_one_still_playing_wins_when_the_other_gives_up(board):
     state2 = rules.new_game(board, [(0, "A", 0), (1, "B", 1)], random.Random(5))
     with pytest.raises(rules.IllegalAction):
         rules.concede(board, state2, neutral["id"])
+
+
+def test_a_trade_naming_unhashable_cards_is_refused(board):
+    state = make_state(board, {"alaska": 0}, {"alaska": 3}, phase=rules.PHASE_REINFORCE)
+    state.current = 0
+    state.players[0]["cards"] = rules.build_deck(board, random.Random(4))[:3]
+    before = state.to_dict(full=True)
+    with pytest.raises(rules.IllegalAction):
+        rules.apply(board, state, 0, {"type": "trade", "cards": [[0], 1, 2]}, random.Random(0))
+    assert state.to_dict(full=True) == before

@@ -438,7 +438,8 @@ class GameState:
             raise ValueError("board state does not match the board")
         for tid in board.order:
             # 0 is legal only on a conquest awaiting occupation (checked below).
-            if owner[tid] not in ids or not _small_int(armies[tid], 0, MAX_ARMIES):
+            if not _small_int(owner[tid], 0, 99) or owner[tid] not in ids \
+                    or not _small_int(armies[tid], 0, MAX_ARMIES):
                 raise ValueError(f"invalid state for {tid}")
         state.owner = dict(owner)
         state.armies = dict(armies)
@@ -461,8 +462,8 @@ class GameState:
         state.resume_attack = bool(data.get("resume_attack"))
         occupy = data.get("occupy")
         if occupy is not None:
-            if (not isinstance(occupy, dict) or occupy.get("from") not in board.territories
-                    or occupy.get("to") not in board.territories
+            if (not isinstance(occupy, dict) or not _known(occupy.get("from"), board.territories)
+                    or not _known(occupy.get("to"), board.territories)
                     or not _small_int(occupy.get("min"), 1, MAX_ARMIES)
                     or not _small_int(occupy.get("max"), 1, MAX_ARMIES)):
                 raise ValueError("invalid occupy step")
@@ -472,7 +473,7 @@ class GameState:
             raise ValueError("a territory has no armies")
         state.occupy = occupy
         winner = data.get("winner")
-        if winner is not None and winner not in ids:
+        if winner is not None and (not _small_int(winner, 0, 99) or winner not in ids):
             raise ValueError("invalid winner")
         state.winner = winner
         deck = data.get("deck")
@@ -485,13 +486,20 @@ def _small_int(value: object, low: int, high: int) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
 
 
+def _known(value: object, names) -> bool:
+    """Whether a value from the wire is one of `names` (ids are strings).
+    A bare `in` would raise TypeError for a list or an object, which are
+    unhashable, instead of refusing it."""
+    return isinstance(value, str) and value in names
+
+
 def _clean_card(card: object, board: Board) -> dict:
     if not isinstance(card, dict):
         raise ValueError("invalid card")
     symbol, tid = card.get("s"), card.get("t")
     if symbol == WILD and tid is None:
         return {"t": None, "s": WILD}
-    if symbol in SYMBOLS and tid in board.territories:
+    if _known(symbol, SYMBOLS) and _known(tid, board.territories):
         return {"t": tid, "s": symbol}
     raise ValueError("invalid card")
 
@@ -607,7 +615,7 @@ def apply(board: Board, state: GameState, pid: int, action: object,
 
 def _territory(board: Board, action: dict, key: str) -> str:
     value = action.get(key)
-    if value not in board.territories:
+    if not _known(value, board.territories):
         raise IllegalAction("Unknown territory.")
     return value
 
@@ -625,8 +633,8 @@ def _trade(board, state, pid, action, rng):
     player = state.player(pid)
     indices = action.get("cards")
     if (not isinstance(indices, list) or len(indices) != 3
-            or len(set(indices)) != 3
-            or not all(_small_int(i, 0, len(player["cards"]) - 1) for i in indices)):
+            or not all(_small_int(i, 0, len(player["cards"]) - 1) for i in indices)
+            or len(set(indices)) != 3):
         raise IllegalAction("Choose three of your cards.")
     cards = [player["cards"][i] for i in indices]
     if not is_set(cards):

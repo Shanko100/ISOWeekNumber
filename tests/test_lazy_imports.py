@@ -29,6 +29,13 @@ def test_the_tray_imports_no_window_or_game_module():
     assert "tkinter.colorchooser" not in loaded
 
 
+def test_the_tray_imports_no_temp_file_machinery():
+    # tempfile brings shutil, bz2, lzma and random: only a settings save
+    # or a startup-entry check needs it, so it loads then.
+    loaded = _loaded_after("import weeknumber_tray")
+    assert "tempfile" not in loaded
+
+
 def test_startup_reads_no_zone_table():
     loaded = _loaded_after("import weeknumber")
     assert "weeknumber_timezone" not in loaded

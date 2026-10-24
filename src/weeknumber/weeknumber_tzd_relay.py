@@ -29,6 +29,7 @@ reconnects (weeknumber_tzd_net, reconnecting).
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import queue
@@ -37,6 +38,7 @@ import ssl
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING
 
@@ -82,9 +84,47 @@ def relay_url() -> "str | None":
     if org.disable_online:
         return None
     url = (org.relay_url or os.environ.get(RELAY_ENV) or RELAY_URL).strip().rstrip("/")
-    if not url.startswith(("https://", "http://")):
+    return url if _plain_relay_address(url) else None
+
+
+def _plain_relay_address(url: str) -> bool:
+    """An https:// address with nothing but a host, port and path, as the
+    RelayURL policy requires. Plain http:// only reaches a relay on this
+    machine (a local test relay): anywhere else the game would travel
+    unencrypted and anyone on the way could change it."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        parts.port  # a malformed port raises ValueError
+    except ValueError:
+        return False
+    host = parts.hostname
+    if not host or parts.username or parts.password or parts.query or parts.fragment:
+        return False
+    if parts.scheme == "https":
+        return True
+    if parts.scheme != "http":
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_id(value: object, low: int, high: int) -> bool:
+    """ASCII letters and digits only, `low` to `high` long. str.isalnum
+    alone also passes letters and digits of every other script."""
+    return (isinstance(value, str) and low <= len(value) <= high
+            and value.isascii() and value.isalnum())
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """The relay never redirects; one that does is refused (HTTPError)
+    rather than followed to an address nobody checked."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
-    return url
 
 
 def online_available() -> bool:
@@ -191,9 +231,12 @@ def _websocket(path: str, headers: "list[str] | None" = None):
     url = _ws_url(base, path)
     options = {"context": _ssl_context()} if url.startswith("wss://") else {}
     try:
+        # No redirects: websocket-client would follow one anywhere, even to
+        # ws://, and send the host's Authorization header along.
         ws = websocket.create_connection(
             url, timeout=CONNECT_TIMEOUT_S, header=headers or [],
-            sslopt=options, enable_multithread=True, suppress_origin=True)
+            sslopt=options, enable_multithread=True, suppress_origin=True,
+            redirect_limit=0)
     except websocket.WebSocketBadStatusException as exc:
         status = getattr(exc, "status_code", 0)
         raise RelayError(_STATUS_MESSAGES.get(
@@ -242,10 +285,12 @@ def create_lobby(name: str, host: str, board: rules.Board) -> "tuple[str, str, f
         base + "/v1/lobbies", data=body, method="POST",
         headers={"Content-Type": "application/json",
                  "User-Agent": f"WeekNumber/{APP_VERSION}"})
-    context = _ssl_context() if base.startswith("https://") else None
+    handlers: list = [_NoRedirect()]
+    if base.startswith("https://"):
+        handlers.append(urllib.request.HTTPSHandler(context=_ssl_context()))
     try:
-        with urllib.request.urlopen(request, timeout=CONNECT_TIMEOUT_S,
-                                    context=context) as response:
+        with urllib.request.build_opener(*handlers).open(
+                request, timeout=CONNECT_TIMEOUT_S) as response:
             payload = json.loads(response.read(4096).decode("utf-8"))
     except urllib.error.HTTPError as exc:
         message = None
@@ -258,8 +303,7 @@ def create_lobby(name: str, host: str, board: rules.Board) -> "tuple[str, str, f
     except (OSError, ValueError) as exc:
         raise RelayError("Could not reach the online lobby service.") from exc
     lobby_id, token = payload.get("id"), payload.get("token")
-    if not (isinstance(lobby_id, str) and lobby_id.isalnum() and len(lobby_id) == 12
-            and isinstance(token, str) and token.isalnum() and 16 <= len(token) <= 128):
+    if not (_is_id(lobby_id, 12, 12) and _is_id(token, 16, 128)):
         raise RelayError("The online lobby service sent an unexpected reply.")
     features = payload.get("features")
     features = frozenset(f for f in features if isinstance(f, str) and len(f) <= 32) \
@@ -540,7 +584,7 @@ class GuestConnection:
 
 
 def connect_guest(lobby_id: str) -> GuestConnection:
-    if not (lobby_id.isalnum() and len(lobby_id) == 12):
+    if not _is_id(lobby_id, 12, 12):
         raise RelayError("That lobby no longer exists.")
     return GuestConnection(*_websocket(f"/v1/lobbies/{lobby_id}/join"))
 
@@ -559,7 +603,7 @@ def _clean_lobbies(raw: object, board: rules.Board) -> "list[dict] | None":
         if not isinstance(item, dict):
             continue
         lobby_id, players = item.get("id"), item.get("players")
-        if not (isinstance(lobby_id, str) and lobby_id.isalnum() and len(lobby_id) == 12):
+        if not _is_id(lobby_id, 12, 12):
             continue
         if not isinstance(players, int) or isinstance(players, bool):
             players = 1

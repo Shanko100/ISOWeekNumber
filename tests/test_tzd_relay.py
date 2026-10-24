@@ -61,6 +61,37 @@ def test_relay_url_needs_http_scheme(monkeypatch):
     assert relay._ws_url("http://127.0.0.1:8787", "/x") == "ws://127.0.0.1:8787/x"
 
 
+@pytest.mark.parametrize("url, usable", [
+    ("https://tzd.example", True),
+    ("https://tzd.example:8443/base", True),
+    ("http://127.0.0.1:8787", True),
+    ("http://localhost:8787", True),
+    ("http://[::1]:8787", True),
+    ("http://tzd.example", False),           # unencrypted beyond this machine
+    ("http://127.evil.example", False),
+    ("https://user:pw@tzd.example", False),
+    ("https://tzd.example/?x=1", False),
+    ("https://tzd.example/#x", False),
+    ("https://tzd.example:99999", False),
+    ("ftp://tzd.example", False),
+    ("https://", False),
+])
+def test_relay_url_must_be_a_plain_address(monkeypatch, url, usable):
+    monkeypatch.setenv(relay.RELAY_ENV, url)
+    assert (relay.relay_url() is not None) is usable
+
+
+@pytest.mark.parametrize("value, ok", [
+    ("abcdefghij12", True),
+    ("abcdefghij1", False),
+    ("abcdefghij\u0661\u0662", False),     # Arabic-Indic digits pass isalnum()
+    ("\u00e9bcdefghij12"[:12], False),
+    (None, False),
+])
+def test_lobby_ids_are_ascii(value, ok):
+    assert relay._is_id(value, 12, 12) is ok
+
+
 def test_lobby_list_is_validated(board):
     raw = {"type": "lobbies", "lobbies": [
         {"id": "abcdefghij12", "name": "Fri\x00day", "host": "Ann", "players": 3,

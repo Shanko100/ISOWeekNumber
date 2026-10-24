@@ -93,6 +93,9 @@ Suggested attribution: “Made with Natural Earth.”
 - License: HPND/PIL-style permissive license
 - Notice: `licenses/Pillow.txt`; the full texts of the native libraries in
   the installed wheel are copied into each build's `Licenses.txt`
+- The builds leave out Pillow's image-file readers and writers other than
+  ICO, PNG and BMP, and the native codecs only those use (libavif, libwebp,
+  Little CMS); `Licenses.txt` still carries the wheel's complete notice
 
 Pillow's wheels bundle native libraries whose licenses ask for a credit in
 the documentation of a binary distribution:
