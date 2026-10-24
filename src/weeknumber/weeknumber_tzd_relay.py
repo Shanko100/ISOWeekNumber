@@ -333,6 +333,12 @@ class RelayPeer:
             return None
         return net.decode(text.encode("utf-8"))
 
+    def finish(self, message: dict) -> None:
+        """A last message, then close. The relay WebSocket delivers frames
+        in order, so the goodbye cannot be overtaken by the close."""
+        self.send(message)
+        self.close()
+
     def close(self) -> None:
         if self.closed:
             return
@@ -515,6 +521,12 @@ class GuestConnection:
         if not isinstance(text, str):
             raise net.ProtocolError("unexpected binary message")
         return net.decode(text.encode("utf-8"))
+
+    def finish(self, message: dict) -> None:
+        """A last message, then close: the WebSocket closing handshake comes
+        after the goodbye frame, so the goodbye is not lost."""
+        self.send(message)
+        self.close()
 
     def close(self) -> None:
         if self.closed:

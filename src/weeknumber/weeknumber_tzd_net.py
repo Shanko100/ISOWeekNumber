@@ -88,6 +88,9 @@ SEND_TIMEOUT_S = 10.0
 #: How often a waiting read checks whether its own side closed the
 #: connection (see _Connection.receive).
 READ_POLL_S = 0.25
+#: How long a connection that said goodbye waits for the peer to close too
+#: (see _Connection.finish).
+GOODBYE_LINGER_S = 2.0
 #: Messages a connection may send at once, and how fast that refills. Far
 #: above human play and chat; a flood beyond it disconnects the sender.
 PEER_BURST = 60
@@ -196,6 +199,8 @@ class _Connection:
         self._buffer = b""
         self._send_lock = threading.Lock()
         self._read_timeout: "float | None" = None
+        #: Set by finish(): until then the reader discards what arrives.
+        self._drain_until: "float | None" = None
         self.closed = False
         enable_keepalive(sock)
         sock.settimeout(SEND_TIMEOUT_S)
@@ -204,6 +209,8 @@ class _Connection:
         self._read_timeout = seconds
 
     def send(self, message: dict) -> bool:
+        if self._drain_until is not None:
+            return False  # said goodbye: the sending side is shut
         try:
             data = encode(message)
             with self._send_lock:
@@ -221,10 +228,19 @@ class _Connection:
         The wait is sliced into READ_POLL_S steps that check `closed`:
         macOS does not reliably wake a thread blocked on a socket when
         another thread shuts it down and closes it, so without the check a
-        local close() went unnoticed until the socket's own timeout."""
+        local close() went unnoticed until the socket's own timeout.
+
+        After finish() nothing more is delivered: what arrives is discarded
+        until the peer closes or GOODBYE_LINGER_S passes, then None."""
         deadline = (None if self._read_timeout is None
                     else time.monotonic() + self._read_timeout)
-        while b"\n" not in self._buffer:
+        while True:
+            if self._drain_until is not None:
+                self._buffer = b""
+                if time.monotonic() >= self._drain_until:
+                    return None
+            elif b"\n" in self._buffer:
+                break
             if len(self._buffer) > MAX_MESSAGE_BYTES:
                 raise ProtocolError("message too large")
             if self.closed:
@@ -252,6 +268,33 @@ class _Connection:
             self._buffer += chunk
         line, self._buffer = self._buffer.split(b"\n", 1)
         return decode(line)
+
+    @property
+    def finishing(self) -> bool:
+        """Whether finish() was called and the reader is draining."""
+        return self._drain_until is not None and not self.closed
+
+    def finish(self, message: dict) -> None:
+        """Send a last message -- a goodbye -- so that it arrives, and leave
+        closing to the thread reading this connection.
+
+        Closing straight after the send can lose it on Windows: a socket shut
+        down or closed with unread data queued, or with data still arriving,
+        is reset, and the peer's system can throw away what it has not read
+        yet, the goodbye included. So only the sending side shuts down (the
+        peer reads the message, then the end of the stream); this side's
+        reader discards whatever still comes until the peer closes too, or
+        GOODBYE_LINGER_S passes, and then closes as usual. Use it only where
+        a reader thread exists; elsewhere send() and close()."""
+        if self.closed or self._drain_until is not None:
+            return
+        if not self.send(message):
+            return
+        self._drain_until = time.monotonic() + GOODBYE_LINGER_S
+        try:
+            self.sock.shutdown(socket.SHUT_WR)
+        except OSError:
+            self.close()
 
     def close(self) -> None:
         if self.closed:
@@ -401,9 +444,8 @@ class LobbyHost:
             timers = [s.pop("timer") for s in self._seats if s.get("timer") is not None]
         for timer in timers:
             timer.cancel()
-        for conn in conns:
-            conn.send({"type": "bye", "reason": "The host closed the game."})
-            conn.close()
+        for conn in conns:  # each player's reader closes its connection after
+            conn.finish({"type": "bye", "reason": "The host closed the game."})
         if self._transport is not None:
             self._transport.stop()
         for sock in (self._tcp, self._udp):
@@ -548,7 +590,9 @@ class LobbyHost:
             self._broadcast_state([])
         inbound = chat.TokenBucket(PEER_BURST, PEER_REFILL_S)
         try:
-            while not self._stopping.is_set():
+            # Once stopping, a connection the host said goodbye on is drained
+            # to its end (see _Connection.finish); any other one ends now.
+            while not self._stopping.is_set() or getattr(conn, "finishing", False):
                 message = conn.receive()
                 if message is None:
                     break
@@ -1113,9 +1157,8 @@ class LobbyClient:
     def close(self) -> None:
         self._closing = True
         self._wake.set()
-        if self._conn is not None:
-            self._conn.send({"type": "bye"})
-            self._conn.close()
+        if self._conn is not None:  # _session's reader closes it after
+            self._conn.finish({"type": "bye"})
 
 
 def _clean_text(value: object, fallback: str) -> str:

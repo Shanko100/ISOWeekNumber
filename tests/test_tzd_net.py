@@ -208,3 +208,93 @@ def test_a_local_close_ends_a_waiting_read_promptly():
         finally:
             client.close()
             peer.close()
+
+
+def _pair(server):
+    client = socket.create_connection(server.getsockname(), timeout=TIMEOUT)
+    peer, _ = server.accept()
+    peer.settimeout(TIMEOUT)
+    return net._Connection(client), peer
+
+
+def _start_reader(conn):
+    import threading
+    got = []
+
+    def read():
+        while (message := conn.receive()) is not None:
+            got.append(message)
+        conn.close()  # what LobbyHost._serve and LobbyClient._session do
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    return reader, got
+
+
+def test_a_goodbye_arrives_although_messages_are_still_coming_in():
+    # Windows resets a socket shut down or closed while data is still queued
+    # or arriving, and a reset can throw the goodbye away on the other side.
+    # finish() shuts down only the sending side and lets the reader close
+    # once the peer has closed too.
+    with socket.create_server(("127.0.0.1", 0)) as server:
+        conn, peer = _pair(server)
+        reader, got = _start_reader(conn)
+        try:
+            peer.sendall(net.encode({"type": "lobby"}) * 50)
+            conn.finish({"type": "bye"})
+            assert not conn.closed  # the reader closes it, not finish()
+            lines = peer.makefile("rb")
+            assert net.decode(lines.readline())["type"] == "bye"
+            assert lines.readline() == b""  # then the end of the stream
+            peer.sendall(net.encode({"type": "state"}))  # still arriving: discarded
+            lines.close()  # the file holds the socket open
+            peer.close()
+            reader.join(timeout=2)
+            assert not reader.is_alive() and conn.closed
+            assert {"type": "state"} not in [{"type": m["type"]} for m in got]
+        finally:
+            peer.close()
+            conn.close()
+
+
+def test_after_a_goodbye_nothing_more_is_sent():
+    with socket.create_server(("127.0.0.1", 0)) as server:
+        conn, peer = _pair(server)
+        reader, _ = _start_reader(conn)
+        try:
+            conn.finish({"type": "bye"})
+            conn.finish({"type": "bye"})  # a second goodbye is not sent
+            assert conn.send({"type": "action", "action": {}}) is False
+            with peer.makefile("rb") as lines:
+                assert net.decode(lines.readline())["type"] == "bye"
+                assert lines.readline() == b""
+        finally:
+            peer.close()
+            reader.join(timeout=2)
+            conn.close()
+
+
+def test_a_peer_that_never_closes_is_left_after_the_linger(monkeypatch):
+    monkeypatch.setattr(net, "GOODBYE_LINGER_S", 0.3)
+    with socket.create_server(("127.0.0.1", 0)) as server:
+        conn, peer = _pair(server)
+        reader, _ = _start_reader(conn)
+        try:
+            started = time.monotonic()
+            conn.finish({"type": "bye"})
+            reader.join(timeout=3)
+            assert not reader.is_alive() and conn.closed
+            assert time.monotonic() - started < 2
+        finally:
+            peer.close()
+            conn.close()
+
+
+def test_a_goodbye_on_a_closed_connection_does_nothing():
+    with socket.create_server(("127.0.0.1", 0)) as server:
+        conn, peer = _pair(server)
+        try:
+            conn.close()
+            conn.finish({"type": "bye"})
+            assert peer.recv(100) == b""
+        finally:
+            peer.close()
