@@ -304,7 +304,11 @@ def _random_legal_action(board, state, rng):
         n = step["max"] if rng.random() < 0.8 else rng.randint(step["min"], step["max"])
         return {"type": "occupy", "n": n}
     if state.phase == rules.PHASE_ATTACK:
-        options = [(s, t) for s in own for t in rules.attack_targets(board, state, s)
+        # Sorted: max() keeps the first of equal options, and a set's order
+        # changes with the hash seed of each run, so unsorted the same seed
+        # played a different game every run (and about one in a thousand
+        # ran past the move limit).
+        options = [(s, t) for s in own for t in sorted(rules.attack_targets(board, state, s))
                    if state.armies[s] > state.armies[t] + 1]
         if options:
             source, target = max(options, key=lambda o: state.armies[o[0]] - state.armies[o[1]])
