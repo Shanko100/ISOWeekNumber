@@ -1,7 +1,8 @@
 name: build
 
-# Builds WeekNumber.exe (Windows x64) and WeekNumber.dmg (macOS arm64) from
-# the chosen branch or tag. Start it by hand: Actions -> build -> Run workflow.
+# Builds WeekNumber.exe (Windows x64), WeekNumber-arm64.exe (Windows ARM64)
+# and WeekNumber.dmg (macOS arm64) from the chosen branch or tag. Start it by
+# hand: Actions -> build -> Run workflow.
 # The files are attached to the run as downloads; nothing is committed.
 
 on:
@@ -13,16 +14,34 @@ permissions:
 env:
   # Same Python and fixed hash seed on every run, so the same commit builds
   # with the same interpreter and the same bytecode ordering.
-  PYTHON_VERSION: "3.12.10"
+  PYTHON_VERSION: "3.15.1"
   PYTHONHASHSEED: "0"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PIP_NO_INPUT: "1"
 
 jobs:
   windows:
-    name: WeekNumber.exe (Windows x64)
-    runs-on: windows-2025
+    # One exe cannot hold both architectures, so each gets its own. Both have
+    # every feature, encrypted chat included; the x64 exe also runs on
+    # Windows 11 on ARM (emulated).
+    name: ${{ matrix.artifact }} (Windows ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+            machine: AMD64
+            artifact: WeekNumber.exe
+          - arch: arm64
+            runner: windows-11-arm
+            machine: ARM64
+            artifact: WeekNumber-arm64.exe
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,16 +50,19 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          architecture: x64
+          architecture: ${{ matrix.arch }}
 
       - name: Fix timestamps to the commit time
-        shell: bash
-        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+        run: '"SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
 
       - name: Install the exact build dependencies
         run: |
           python -m pip install --require-hashes --only-binary :all: -r requirements-release.lock
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pip check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $machine = python -c "import platform; print(platform.machine())"
+          if ($machine -ne "${{ matrix.machine }}") { throw "Python is $machine, expected ${{ matrix.machine }}" }
 
       - name: Build
         working-directory: src/weeknumber
@@ -67,22 +89,25 @@ jobs:
               sys.exit("The regenerated holiday data differs from the committed file.")
           print("Holiday data identical to the repository.")
 
-      - name: Checksum
-        shell: bash
+      - name: Name and checksum
         run: |
-          VERSION=$(python -c "import re; print(re.search(r'APP_VERSION = \"([^\"]+)\"', open('src/weeknumber/weeknumber_core.py', encoding='utf-8').read()).group(1))")
-          HASH=$(sha256sum src/weeknumber/dist/WeekNumber.exe | cut -d' ' -f1)
-          {
-            echo "### WeekNumber.exe"
-            echo "- Version: $VERSION"
-            echo "- Commit: $GITHUB_SHA"
-            echo "- Python: $(python --version)"
-            echo "- SHA-256: \`$HASH\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          $out = "src/weeknumber/dist/${{ matrix.artifact }}"
+          if ("${{ matrix.artifact }}" -ne "WeekNumber.exe") {
+            Move-Item src/weeknumber/dist/WeekNumber.exe $out
+          }
+          $version = python -c "import re; print(re.search(r'^APP_VERSION = .(.+?).$', open('src/weeknumber/weeknumber_core.py', encoding='utf-8').read(), re.M).group(1))"
+          $hash = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+          @(
+            "### ${{ matrix.artifact }}",
+            "- Version: $version (${{ matrix.arch }})",
+            "- Commit: $env:GITHUB_SHA",
+            "- Python: $(python --version)",
+            "- SHA-256: ``$hash``"
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          path: src/weeknumber/dist/WeekNumber.exe
+          path: src/weeknumber/dist/${{ matrix.artifact }}
           archive: false
           if-no-files-found: error
           retention-days: 30
