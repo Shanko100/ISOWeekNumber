@@ -22,7 +22,6 @@ import fcntl
 import os
 import plistlib
 import socket
-import tempfile
 import threading
 from ctypes import c_bool, c_double, c_long, c_ulong
 from pathlib import Path
@@ -767,6 +766,7 @@ def _read_agent() -> "dict | None":
 
 
 def _write_agent(document: dict) -> None:
+    import tempfile  # on use: it brings shutil, bz2, lzma and random along
     path = launch_agent_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix="weeknumber-", suffix=".plist.tmp",

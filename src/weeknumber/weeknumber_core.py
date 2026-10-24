@@ -73,7 +73,6 @@ import json
 import logging
 import queue
 import re
-import tempfile
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -853,6 +852,9 @@ class SettingsStore:
             self._data["TimeZoneKey"] = timezone_key
 
     def save(self) -> None:
+        # Imported here: tempfile brings shutil, bz2, lzma and random (about
+        # 0.7 MB) that the idle tray never needs between saves.
+        import tempfile
         try:
             SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
             fd, tmp_name = tempfile.mkstemp(

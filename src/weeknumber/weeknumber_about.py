@@ -140,7 +140,9 @@ class AboutPopup(TitledDialog):
             log.info("app.ico not found; About window renders without an icon")
             return None
         try:
-            with Image.open(path) as ico:
+            # Only the ICO reader (with the PNG and BMP frames inside it):
+            # the build ships no other image parsers, and none is needed.
+            with Image.open(path, formats=["ICO"]) as ico:
                 src = ico.convert("RGBA")  # forces load of the largest frame
             src = ImageOps.contain(src, (size, size), Image.LANCZOS)
             out = Image.new("RGBA", (size, size), (0, 0, 0, 0))

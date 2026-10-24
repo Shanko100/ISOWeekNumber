@@ -9,7 +9,6 @@ import logging
 import os
 import re
 import sys
-import tempfile
 import urllib.parse
 from pathlib import Path
 from typing import NamedTuple
@@ -73,6 +72,7 @@ def containing_root(path: Path, roots: "list[tuple[Path, str]]") -> "str | None"
 
 
 def temp_dir() -> Path:
+    import tempfile  # on use: it brings shutil, bz2, lzma and random along
     return Path(tempfile.gettempdir())
 
 
