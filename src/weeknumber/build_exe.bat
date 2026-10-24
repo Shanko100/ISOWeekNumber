@@ -297,6 +297,15 @@ echo       OK
 ::                  lookups of frozen modules; the app never reads
 ::                  its sources. An empty hook of the same name in
 ::                  build\hooks takes its place.
+::   zstd           Python's compression.zstd: shutil and zipfile
+::                  import it only to offer zstd archives, inside
+::                  try/except ImportError; nothing here uses it.
+::   UCRT           Windows 10 and later always load the system's
+::                  Universal C Runtime, even with a copy beside
+::                  the app (PyInstaller notes this, #6326). The
+::                  copy PyInstaller packs for older Windows -
+::                  0.6 to 0.9 MB - is filtered out of the spec,
+::                  which is written first and then built.
 ::   Licenses.txt   every license the exe carries, from this
 ::                  build's Python; About > Legal notices shows it
 ::   _cffi_backend  PyNaCl's libsodium core imports it from C, where
@@ -323,7 +332,7 @@ if errorlevel 1 (
     goto :DONE
 )
 
-!PY! -m PyInstaller --clean --noconfirm %MODE% --windowed --name WeekNumber ^
+!PY! -m PyInstaller.utils.cliutils.makespec %MODE% --windowed --name WeekNumber ^
     !ICON_ARG! ^
     --add-data "!CD!\holiday_data.jsonl;." ^
     --add-data "!CD!\timezone_data.json;." ^
@@ -338,12 +347,24 @@ if errorlevel 1 (
     --exclude-module PySide2 --exclude-module PySide6 ^
     --exclude-module IPython --exclude-module matplotlib ^
     --exclude-module numpy --exclude-module pandas ^
+    --exclude-module compression.zstd --exclude-module _zstd ^
     --exclude-module weeknumber_menubar ^
     --exclude-module weeknumber_platform._macos ^
     --exclude-module weeknumber_platform._macos_tz ^
     !PIL_EXCLUDES! ^
     weeknumber.py
+if errorlevel 1 (
+    echo       ERROR: Could not write the PyInstaller spec.
+    goto :DONE
+)
 
+!PY! -c "import sys; p = sys.argv[1]; s = open(p, encoding='utf-8').read(); m = 'pyz = PYZ('; assert s.count(m) == 1, 'unexpected spec layout'; f = 'a.binaries = [b for b in a.binaries if not b[0].lower().replace(chr(92), chr(47)).split(chr(47))[-1].startswith((\'ucrtbase\', \'api-ms-win-\'))]'; open(p, 'w', encoding='utf-8').write(s.replace(m, f + chr(10) + m, 1))" "!CD!\build\WeekNumber.spec"
+if errorlevel 1 (
+    echo       ERROR: Could not adjust the PyInstaller spec.
+    goto :DONE
+)
+
+!PY! -m PyInstaller --clean --noconfirm "!CD!\build\WeekNumber.spec"
 if errorlevel 1 (
     echo       ERROR: Build failed.
     goto :DONE
