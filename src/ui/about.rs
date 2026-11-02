@@ -49,7 +49,7 @@ pub struct AboutDialog {
 }
 
 fn version_text() -> String {
-    format!("Workplace Edition {}", app::APP_VERSION)
+    format!("Version {}", app::APP_VERSION)
 }
 
 /// _load_icon_image: Lanczos to `size`, pasted onto transparency with its
