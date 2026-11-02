@@ -1,0 +1,3 @@
+# The holiday index stores byte lengths for the following lines.
+# CRLF conversion would invalidate those offsets.
+assets/holiday_data.jsonl -text
