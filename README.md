@@ -1,6 +1,6 @@
 <div align="center">
 
-# 📅 WeekNumber — Workplace Edition
+# 📅 WeekNumber
 
 ### The current ISO week number, always one click away. ⚡
 
