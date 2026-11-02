@@ -1,0 +1,53 @@
+# Release hardening, per target.
+#
+# Windows: static CRT (no VCRUNTIME/UCRT DLLs beside the exe), Control Flow
+# Guard, and DLLs the exe imports load from System32 only
+# (/DEPENDENTLOADFLAG). ASLR (/DYNAMICBASE, /HIGHENTROPYVA) and DEP
+# (/NXCOMPAT) are the MSVC linker's defaults and are stated again so they
+# cannot be switched off silently. CET shadow-stack compatibility exists on
+# x64 only.
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "control-flow-guard=checks",
+    "-C", "link-arg=/DYNAMICBASE",
+    "-C", "link-arg=/HIGHENTROPYVA",
+    "-C", "link-arg=/NXCOMPAT",
+    "-C", "link-arg=/CETCOMPAT",
+    "-C", "link-arg=/DEPENDENTLOADFLAG:0x800",
+    "-C", "link-arg=/guard:cf",
+]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "control-flow-guard=checks",
+    "-C", "link-arg=/DYNAMICBASE",
+    "-C", "link-arg=/HIGHENTROPYVA",
+    "-C", "link-arg=/NXCOMPAT",
+    "-C", "link-arg=/DEPENDENTLOADFLAG:0x800",
+    "-C", "link-arg=/guard:cf",
+]
+
+# Linux: one static, position-independent executable (static-pie) that
+# runs on any distribution, with full RELRO, a non-executable stack and no
+# dynamic loader or shared libraries at all.
+[target.x86_64-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "relocation-model=pie",
+    "-C", "link-arg=-Wl,-z,relro,-z,now",
+    "-C", "link-arg=-Wl,-z,noexecstack",
+]
+
+[target.aarch64-unknown-linux-musl]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "relocation-model=pie",
+    "-C", "link-arg=-Wl,-z,relro,-z,now",
+    "-C", "link-arg=-Wl,-z,noexecstack",
+]
+
+# macOS: Apple's linker already makes position-independent executables
+# with a non-executable stack and heap; the hardened runtime is switched on
+# when the app is signed (build-macos.yml).
