@@ -1,0 +1,101 @@
+name: screenshots
+
+# Refreshes the README's screenshots: runs the UI tests of each edition
+# (Linux on Xfce at 200 %, Windows, macOS 26 with Liquid Glass) and commits
+# their screenshots to docs/screenshots/<platform>/ (Windows: windows-vm/)
+# on the branch it runs on. Start it by hand: Actions -> screenshots -> Run
+# workflow.
+#
+# GitHub's Windows runners are virtual machines without a GPU, where
+# Windows draws every window with square corners; the README's Windows
+# pictures (win11-*.png) come from a real Windows 11 PC, where the
+# calendar has its rounded corners.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: screenshots-${{ github.ref }}
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the test desktop
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            xvfb xfwm4 xfce4-panel x11-utils x11-xserver-utils xdotool imagemagick feh \
+            dbus dbus-x11 at-spi2-core fonts-dejavu-core fonts-noto-core \
+            squashfs-tools desktop-file-utils python3
+      - name: Build the AppImage
+        run: |
+          channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target x86_64-unknown-linux-musl --no-self-update
+          cargo build --release --locked --target x86_64-unknown-linux-musl
+          mkdir -p dist
+          packaging/linux/make-appimage.sh target/x86_64-unknown-linux-musl/release/WeekNumber dist/WeekNumber.AppImage
+      - name: UI tests
+        run: tests/linux/ui-test.sh dist/WeekNumber.AppImage screenshots
+      - name: Commit the screenshots
+        if: always()
+        run: .github/commit-screenshots.sh linux
+
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the exe
+        run: |
+          $channel = (Select-String -Path rust-toolchain.toml -Pattern '^channel\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          rustup toolchain install $channel --profile minimal --target x86_64-pc-windows-msvc --no-self-update
+          cargo build --release --locked --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: UI tests
+        run: tests/windows/ui-test.ps1 -Exe target/x86_64-pc-windows-msvc/release/WeekNumber.exe -Shots screenshots
+      - name: Commit the screenshots
+        if: always()
+        shell: bash
+        run: .github/commit-screenshots.sh windows-vm
+
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build and sign the app
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target aarch64-apple-darwin --no-self-update
+          cargo build --release --locked --target aarch64-apple-darwin
+          app=dist/WeekNumber.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp target/aarch64-apple-darwin/release/WeekNumber "$app/Contents/MacOS/WeekNumber"
+          cp assets/macos/Info.plist "$app/Contents/Info.plist"
+          cp assets/app.icns "$app/Contents/Resources/AppIcon.icns"
+          codesign --force --options runtime --sign - "$app"
+      - name: UI tests
+        run: tests/macos/ui-test.sh dist/WeekNumber.app screenshots
+      - name: Commit the screenshots
+        if: always()
+        run: .github/commit-screenshots.sh macos
