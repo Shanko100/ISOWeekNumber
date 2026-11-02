@@ -8,9 +8,9 @@ A small, offline tray app written in **Rust** for **Windows** 🪟, **macOS** �
 and **Linux** 🐧, with week numbers, a calendar, public holidays, time zones
 and quick copy actions.
 
-[![Windows tests](https://github.com/Shanko100/ISOWeekNumber-Rust/actions/workflows/test-windows.yml/badge.svg)](https://github.com/Shanko100/ISOWeekNumber-Rust/actions/workflows/test-windows.yml)
-[![macOS tests](https://github.com/Shanko100/ISOWeekNumber-Rust/actions/workflows/test-macos.yml/badge.svg)](https://github.com/Shanko100/ISOWeekNumber-Rust/actions/workflows/test-macos.yml)
-[![Linux tests](https://github.com/Shanko100/ISOWeekNumber-Rust/actions/workflows/test-linux.yml/badge.svg)](https://github.com/Shanko100/ISOWeekNumber-Rust/actions/workflows/test-linux.yml)
+[![Windows tests](https://github.com/Shanko100/ISOWeekNumber/actions/workflows/test-windows.yml/badge.svg)](https://github.com/Shanko100/ISOWeekNumber/actions/workflows/test-windows.yml)
+[![macOS tests](https://github.com/Shanko100/ISOWeekNumber/actions/workflows/test-macos.yml/badge.svg)](https://github.com/Shanko100/ISOWeekNumber/actions/workflows/test-macos.yml)
+[![Linux tests](https://github.com/Shanko100/ISOWeekNumber/actions/workflows/test-linux.yml/badge.svg)](https://github.com/Shanko100/ISOWeekNumber/actions/workflows/test-linux.yml)
 
 </div>
 
