@@ -1,0 +1,80 @@
+name: test-macos
+
+# Tests the macOS edition on every push to main and every pull request, on Apple silicon
+# with macOS 15 (the popover material) and macOS 26 (Liquid Glass):
+# formatting, linting, the unit tests, then the signed release app on the
+# runner's desktop (tests/macos/ui-test.sh): first run, the menu bar item,
+# the calendar on glass, the menu and every dialog in both themes, single
+# instance and memory. Screenshots of every window are attached to the run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  TARGET: aarch64-apple-darwin
+  MACOSX_DEPLOYMENT_TARGET: "13.0"
+
+jobs:
+  test:
+    name: macOS ${{ matrix.macos }}
+    runs-on: macos-${{ matrix.macos }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        macos: ["15", "26"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the Rust toolchain pinned in rust-toolchain.toml
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal --component clippy,rustfmt --target "$TARGET" --no-self-update
+
+      - name: Format and lint
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --target "$TARGET" --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test --locked --target "$TARGET"
+
+      - name: Build and sign the app (ad hoc, hardened runtime)
+        run: |
+          cargo build --release --locked --target "$TARGET"
+          app=dist/WeekNumber.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp "target/$TARGET/release/WeekNumber" "$app/Contents/MacOS/WeekNumber"
+          cp assets/macos/Info.plist "$app/Contents/Info.plist"
+          cp assets/app.icns "$app/Contents/Resources/AppIcon.icns"
+          printf 'APPL????' > "$app/Contents/PkgInfo"
+          codesign --force --options runtime --sign - "$app"
+          codesign --verify --deep --strict "$app"
+
+      - name: UI tests on the desktop
+        run: tests/macos/ui-test.sh dist/WeekNumber.app screenshots
+
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshots-macos-${{ matrix.macos }}
+          path: screenshots
+          if-no-files-found: warn
+          retention-days: 14

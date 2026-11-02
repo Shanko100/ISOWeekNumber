@@ -1,0 +1,195 @@
+name: build-linux
+
+# Builds WeekNumber-<version>-linux-x64.AppImage and -linux-arm64.AppImage:
+# one statically linked executable (musl, static-pie) that runs on any
+# distribution -- Ubuntu, Linux Mint, Fedora, Bazzite, SteamOS, Arch,
+# Debian, openSUSE and the rest -- with no libraries to install, packed as
+# an AppImage (packaging/linux/make-appimage.sh) that installs itself on a
+# double-click. Start it by hand: Actions -> build-linux -> Run workflow.
+# The AppImages and their SHA-256 are attached to the run as downloads;
+# nothing is committed.
+#
+# Each architecture builds natively and runs formatting, linting, unit
+# tests (including a live D-Bus tray test), dependency auditing, binary
+# checks, and a smoke test on a headless X server with a system tray.
+# (UI tests on a full desktop: test-linux.yml.)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  CARGO_DENY_VERSION: "0.20.2"
+
+jobs:
+  build:
+    name: WeekNumber for Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    env:
+      TARGET: ${{ matrix.target }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install test tools (X server, tray, D-Bus, fonts)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            xvfb stalonetray openbox x11-utils xdotool imagemagick dbus \
+            fonts-dejavu-core fonts-noto-core squashfs-tools
+
+      - name: Install the Rust toolchain pinned in rust-toolchain.toml
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal --component clippy,rustfmt --target "$TARGET" --no-self-update
+          rustc --version --verbose
+          cargo --version
+
+      - name: Format and lint
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --target "$TARGET" --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test --locked --target "$TARGET"
+
+      - name: Dependency audit (cargo-deny, RustSec advisories)
+        if: matrix.arch == 'x64'
+        run: |
+          cargo install cargo-deny --version "$CARGO_DENY_VERSION" --locked
+          cargo deny --locked check advisories bans licenses sources
+
+      - name: Build the executable and the AppImage
+        run: |
+          cargo build --release --locked --target "$TARGET"
+          version=$(sed -n 's/^pub const APP_VERSION: &str = "\(.*\)";$/\1/p' src/app.rs)
+          test -n "$version"
+          out="WeekNumber-$version-linux-$ARCH.AppImage"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "OUT=$out" >> "$GITHUB_ENV"
+          mkdir -p dist
+          packaging/linux/make-appimage.sh "target/$TARGET/release/WeekNumber" "dist/$out"
+
+      - name: Check the binary
+        # Static-pie, no dynamic loader or libraries, full RELRO, a
+        # non-executable stack, and no networking or TLS code inside; the
+        # AppImage magic, and the payload where AppImage tools look for it.
+        run: |
+          f="dist/$OUT"
+          file "$f"
+          headers=$(readelf -lW "$f")
+          dynamic=$(readelf -d "$f" || true)
+          check() { if eval "$2"; then echo "| $1 | yes |"; else echo "| $1 | NO |"; fail=1; fi; }
+          fail=0
+          {
+            echo "### Binary checks ($OUT)"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            check "Static PIE" 'file "$f" | grep -q "static-pie linked"'
+            check "No dynamic loader" '! grep -q INTERP <<<"$headers"'
+            check "No shared libraries" '! grep -q NEEDED <<<"$dynamic"'
+            check "Full RELRO" 'grep -q GNU_RELRO <<<"$headers" && grep -q BIND_NOW <<<"$dynamic"'
+            check "Non-executable stack" 'grep GNU_STACK <<<"$headers" | grep -qv RWE'
+            check "No TLS libraries" '! strings "$f" | grep -qiE "openssl|libssl|rustls"'
+            check "AppImage type 2 magic" '[ "$(od -An -c -j8 -N3 "$f" | tr -d " ")" = "AI002" ]'
+            check "AppImage payload (SquashFS) at the ELF end" 'unsquashfs -o "$("$f" --appimage-offset)" -l "$f" | grep -q "\.desktop$"'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $fail
+
+      - name: Smoke test (headless desktop with a system tray)
+        # Starts the program as a desktop session would, with its own
+        # config folder: it must stay up as one process, dock its icon in
+        # the tray, write its settings, open the calendar, keep little
+        # memory, and hand over to a second launch.
+        run: |
+          export DISPLAY=:99 HOME="$RUNNER_TEMP/home" XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
+          # The runner image sets XDG_CONFIG_HOME; use the fresh home's.
+          export XDG_CONFIG_HOME="$HOME/.config"
+          mkdir -p "$HOME" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          Xvfb :99 -screen 0 1600x900x24 >/dev/null 2>&1 &
+          sleep 2
+          openbox >/dev/null 2>&1 &
+          stalonetray --geometry 4x1-0-0 --icon-size 24 --kludges force_icons_size -bg '#202020' >/dev/null 2>&1 &
+          sleep 2
+          exe="$PWD/dist/$OUT"
+          export WEEKNUMBER_NO_INSTALL_PROMPT=1
+          "$exe" &
+          first=$!
+          sleep 5
+          kill -0 $first || { echo "WeekNumber exited after start"; exit 1; }
+          count=$(pgrep -c -f "^$exe\$" || true)
+          test "$count" -eq 1 || { echo "expected 1 process, found $count"; exit 1; }
+          test -z "$(pgrep -P $first)" || { echo "child processes started"; exit 1; }
+          grep -q '"StartupInitialized": true' "$HOME/.config/weeknumber/settings.json"
+          xwininfo -root -tree | grep -i '"weeknumber"' || { echo "no tray icon window"; exit 1; }
+          idle_kb=$(awk '/VmRSS/ {print $2}' /proc/$first/status)
+          # Click the tray icon: the calendar opens.
+          xdotool mousemove 1516 888 click 1
+          sleep 2
+          xwininfo -root -tree | grep -E '"WeekNumber".*[0-9]{3}x[0-9]{3}' || { echo "calendar did not open"; exit 1; }
+          open_kb=$(awk '/VmRSS/ {print $2}' /proc/$first/status)
+          xdotool key Escape
+          sleep 1
+          closed_kb=$(awk '/VmRSS/ {print $2}' /proc/$first/status)
+          # A second launch takes over.
+          "$exe" &
+          second=$!
+          sleep 4
+          if kill -0 $first 2>/dev/null; then echo "the running copy did not hand over"; exit 1; fi
+          kill -0 $second || { echo "the new launch exited"; exit 1; }
+          kill $second
+          {
+            echo "### Smoke test ($OUT)"
+            echo "Started, docked in the tray, opened and closed the calendar, wrote settings.json, handed over to a second launch."
+            echo ""
+            echo "| Idle RSS (KB) | Calendar open (KB) | After closing (KB) | Size (bytes) |"
+            echo "|---|---|---|---|"
+            echo "| $idle_kb | $open_kb | $closed_kb | $(stat -c %s "$exe") |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Checksum
+        run: |
+          cd dist
+          sha256sum "$OUT" | sed 's/  / */' > "$OUT.sha256"
+          cat "$OUT.sha256"
+
+      - name: Upload the AppImage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.OUT }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.OUT }}.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+

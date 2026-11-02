@@ -1,0 +1,183 @@
+name: build-windows-x64
+
+# Builds WeekNumber-<version>-windows-x64.exe. Start it by hand: Actions ->
+# build-windows-x64 -> Run workflow. The exe and its SHA-256 are attached
+# to the run as downloads; nothing is committed. (UI tests: test-windows.yml.)
+#
+# The build runs formatting, linting, tests, dependency auditing, binary
+# hardening checks, a smoke test and checksum generation.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  TARGET: x86_64-pc-windows-msvc
+  CARGO_DENY_VERSION: "0.20.2"
+
+jobs:
+  build:
+    name: WeekNumber for Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the Rust toolchain pinned in rust-toolchain.toml
+        run: |
+          $channel = (Select-String -Path rust-toolchain.toml -Pattern '^channel\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          if (-not $channel) { throw "No channel in rust-toolchain.toml" }
+          rustup toolchain install $channel --profile minimal --component clippy,rustfmt --target $env:TARGET --no-self-update
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          rustc --version --verbose
+          cargo --version
+
+      - name: Format and lint
+        run: |
+          cargo fmt --check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo clippy --locked --target $env:TARGET -- -D warnings
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Unit tests
+        run: |
+          cargo test --locked --target $env:TARGET
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Dependency audit (cargo-deny, RustSec advisories)
+        run: |
+          cargo install cargo-deny --version $env:CARGO_DENY_VERSION --locked
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo deny --locked check advisories bans licenses sources
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Build
+        run: |
+          cargo build --release --locked --target $env:TARGET
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Release file name: WeekNumber-<version>-windows-x64.exe
+          $version = (Select-String -Path src/app.rs -Pattern '^pub const APP_VERSION: &str = "([^"]+)";').Matches[0].Groups[1].Value
+          if (-not $version) { throw "No APP_VERSION in src/app.rs" }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $out = "WeekNumber-$version-windows-x64.exe"
+          Copy-Item "target/$env:TARGET/release/WeekNumber.exe" "dist/$out"
+          "OUT=$out" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Check hardening, imports and manifest
+        # The exe must carry ASLR (high entropy), DEP, CFG and CET, link the
+        # C runtime statically, import no networking DLL, and embed the
+        # asInvoker / PerMonitorV2 manifest.
+        run: |
+          $exe = "dist/$env:OUT"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin not found" }
+          $headers = (& $dumpbin /nologo /headers $exe) -join "`n"
+          $loadcfg = (& $dumpbin /nologo /loadconfig $exe) -join "`n"
+          $imports = (& $dumpbin /nologo /dependents $exe) -join "`n"
+          $checks = [ordered]@{
+            "ASLR (dynamic base)"       = $headers -match "Dynamic base"
+            "ASLR (high entropy)"       = $headers -match "High Entropy Virtual Addresses"
+            "DEP (NX compatible)"       = $headers -match "NX compatible"
+            "CFG (Guard flag)"          = $headers -match "Guard"
+            "CFG (instrumented)"        = $loadcfg -match "CF instrumented"
+            "CET shadow stack"          = $headers -match "CET compatible"
+            "Static CRT"                = -not ($imports -match "(?i)vcruntime|ucrtbase|api-ms-win-crt|msvcp")
+            "No networking DLL"         = -not ($imports -match "(?i)ws2_32|wsock32|mswsock|wininet|winhttp|urlmon|dnsapi|iphlpapi|netapi32|websocket|webio|httpapi")
+          }
+          $dlls = ([regex]::Matches($imports, "(?im)^\s+(\S+\.dll)\s*$") | ForEach-Object { $_.Groups[1].Value.ToLower() }) -join ", "
+          $bytes = [IO.File]::ReadAllBytes((Resolve-Path $exe))
+          $text = [Text.Encoding]::UTF8.GetString($bytes)
+          $checks["Manifest asInvoker"] = $text -match 'level="asInvoker"'
+          $checks["Manifest PerMonitorV2"] = $text -match "PerMonitorV2"
+          $rows = $checks.GetEnumerator() | ForEach-Object { "| $($_.Key) | $(if ($_.Value) { 'yes' } else { 'NO' }) |" }
+          @("### Binary checks", "", "| Check | Result |", "|---|---|") + $rows + @("", "Imported DLLs: $dlls") |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          $rows
+          "Imported DLLs: $dlls"
+          $failed = @($checks.GetEnumerator() | Where-Object { -not $_.Value })
+          if ($failed.Count) { throw "Failed: $($failed.Key -join ', ')" }
+
+      - name: Smoke test
+        # Starts the exe as a user does, with its own %LOCALAPPDATA%; checks that
+        # it stays running as one process with no child processes, writes a
+        # valid settings.json, and hands over to a second launch.
+        run: |
+          $exe = (Resolve-Path "dist/$env:OUT").Path
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "smoke-localappdata"
+          New-Item -ItemType Directory -Force $env:LOCALAPPDATA | Out-Null
+          $first = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 10
+          $first.Refresh()
+          if ($first.HasExited) { throw "WeekNumber exited after start (code $($first.ExitCode))" }
+          $procs = @(Get-CimInstance Win32_Process -Filter "Name = '$env:OUT'")
+          if ($procs.Count -ne 1) { throw "Expected 1 WeekNumber process, found $($procs.Count)" }
+          $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($first.Id)")
+          if ($children.Count) { throw "WeekNumber started child processes: $($children.Name -join ', ')" }
+          $settings = Get-Content (Join-Path $env:LOCALAPPDATA "WeekNumber\settings.json") -Raw | ConvertFrom-Json
+          if ($settings.StartupInitialized -ne $true) { throw "settings.json lacks StartupInitialized" }
+          $p = Get-Process -Id $first.Id
+          $ws = [math]::Round($p.WorkingSet64 / 1MB, 1)
+          $private = [math]::Round($p.PrivateMemorySize64 / 1MB, 1)
+          $threads = $p.Threads.Count
+          $handles = $p.HandleCount
+
+          $second = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 6
+          $first.Refresh(); $second.Refresh()
+          if (-not $first.HasExited) { throw "The running copy did not hand over to a new launch" }
+          if ($second.HasExited) { throw "The new launch exited (code $($second.ExitCode))" }
+          Stop-Process -Id $second.Id -Force
+          "Working set $ws MB, private $private MB, $threads threads, $handles handles"
+
+          @(
+            "### Smoke test",
+            "Started and idle after 10 s, one process, no child processes; settings.json written; a second launch took over.",
+            "",
+            "| Working set (MB) | Private (MB) | Threads | Handles |",
+            "|---|---|---|---|",
+            "| $ws | $private | $threads | $handles |"
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Checksum
+        run: |
+          $out = "dist/$env:OUT"
+          $hash = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+          $size = (Get-Item $out).Length
+          "$($env:OUT): $size bytes, SHA-256 $hash"
+          "$hash *$env:OUT" | Out-File -FilePath "$out.sha256" -Encoding ascii -NoNewline
+          @(
+            "### $env:OUT",
+            "- Version: $env:VERSION (Windows x64)",
+            "- Commit: $env:GITHUB_SHA",
+            "- Toolchain: $(rustc --version)",
+            "- Size: $size bytes",
+            "- SHA-256: ``$hash``"
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      # Unzipped, one download each: the exe and its .sha256.
+      - name: Upload the exe
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.OUT }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.OUT }}.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 30

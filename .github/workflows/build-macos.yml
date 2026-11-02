@@ -1,0 +1,228 @@
+name: build-macos
+
+# Builds WeekNumber for macOS on Apple silicon: the app bundle, signed with
+# the hardened runtime, packed in WeekNumber-<version>-macos-arm64.dmg. Start it by
+# hand: Actions -> build-macos -> Run workflow. The disk image and its
+# SHA-256 are attached to the run as downloads; nothing is committed.
+#
+# Signing: with the repository secrets MACOS_CERTIFICATE (a base64
+# Developer ID Application .p12), MACOS_CERTIFICATE_PASSWORD and
+# MACOS_SIGNING_IDENTITY the app and the image are signed with that
+# identity, and with APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD also
+# notarized and stapled, so Gatekeeper opens them without a warning.
+# Without the secrets they are signed ad hoc (still with the hardened
+# runtime); macOS then asks the user to confirm the first launch.
+#
+# The build runs formatting, linting, tests, dependency auditing, binary
+# checks, a smoke test and checksum generation. (UI tests: test-macos.yml.)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  TARGET: aarch64-apple-darwin
+  CARGO_DENY_VERSION: "0.20.2"
+  MACOSX_DEPLOYMENT_TARGET: "13.0"
+
+jobs:
+  build:
+    name: WeekNumber for macOS (Apple silicon)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the Rust toolchain pinned in rust-toolchain.toml
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal --component clippy,rustfmt --target "$TARGET" --no-self-update
+          rustc --version --verbose
+          cargo --version
+
+      - name: Format and lint
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --target "$TARGET" --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test --locked --target "$TARGET"
+
+      - name: Dependency audit (cargo-deny, RustSec advisories)
+        run: |
+          cargo install cargo-deny --version "$CARGO_DENY_VERSION" --locked
+          cargo deny --locked check advisories bans licenses sources
+
+      - name: Build
+        run: |
+          cargo build --release --locked --target "$TARGET"
+          # Release file name: WeekNumber-<version>-macos-arm64.dmg
+          version=$(sed -n 's/^pub const APP_VERSION: &str = "\(.*\)";$/\1/p' src/app.rs)
+          test -n "$version"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "DMG=WeekNumber-$version-macos-arm64.dmg" >> "$GITHUB_ENV"
+
+      - name: Assemble WeekNumber.app
+        run: |
+          app=dist/WeekNumber.app
+          rm -rf dist && mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp "target/$TARGET/release/WeekNumber" "$app/Contents/MacOS/WeekNumber"
+          cp assets/macos/Info.plist "$app/Contents/Info.plist"
+          cp assets/app.icns "$app/Contents/Resources/AppIcon.icns"
+          printf 'APPL????' > "$app/Contents/PkgInfo"
+          plutil -lint "$app/Contents/Info.plist"
+
+      - name: Sign the app (Developer ID when configured, else ad hoc)
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          app=dist/WeekNumber.app
+          if [ -n "$MACOS_CERTIFICATE" ] && [ -n "$MACOS_SIGNING_IDENTITY" ]; then
+            kc="$RUNNER_TEMP/signing.keychain-db"
+            kcpass=$(openssl rand -hex 16)
+            echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security create-keychain -p "$kcpass" "$kc"
+            security set-keychain-settings -lut 900 "$kc"
+            security unlock-keychain -p "$kcpass" "$kc"
+            security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple: -k "$kcpass" "$kc" >/dev/null
+            security list-keychains -d user -s "$kc"
+            rm -f "$RUNNER_TEMP/cert.p12"
+            identity="$MACOS_SIGNING_IDENTITY"
+            echo "SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+            codesign --force --options runtime --timestamp --sign "$identity" "$app"
+          else
+            echo "No signing certificate configured: signing ad hoc."
+            echo "SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            codesign --force --options runtime --sign - "$app"
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --display --verbose=2 "$app" 2>&1 | grep -E "flags|Identifier|Authority|TeamIdentifier" || true
+
+      - name: Check the binary
+        # Apple silicon only, position independent, hardened runtime, no
+        # networking frameworks, no libraries beyond the system's.
+        run: |
+          exe=dist/WeekNumber.app/Contents/MacOS/WeekNumber
+          libs=$(otool -L "$exe")
+          echo "$libs"
+          check() { if eval "$2"; then echo "| $1 | yes |"; else echo "| $1 | NO |"; fail=1; fi; }
+          fail=0
+          {
+            echo "### Binary checks"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            check "Apple silicon (arm64)" '[ "$(lipo -archs "$exe")" = "arm64" ]'
+            check "Position independent (PIE)" 'otool -hv "$exe" | grep -q PIE'
+            check "Hardened runtime" 'codesign --display --verbose=2 dist/WeekNumber.app 2>&1 | grep -q "runtime"'
+            check "System libraries only" '! grep -vE "^\s*(/usr/lib/|/System/Library/)|:$" <<<"$libs" | grep -q .'
+            check "No networking frameworks" '! grep -qE "CFNetwork|Network.framework|libcurl" <<<"$libs"'
+            check "Minimum macOS 13" 'otool -l "$exe" | grep -A3 LC_BUILD_VERSION | grep -q "minos 13.0"'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $fail
+
+      - name: Smoke test
+        # Starts the app as a login session would, with its own home
+        # folder: it must stay up as one process with no child processes,
+        # write its settings, open the calendar, and hand over to a second
+        # launch.
+        run: |
+          export HOME="$RUNNER_TEMP/home" TMPDIR="$RUNNER_TEMP/tmp/"
+          mkdir -p "$HOME" "$TMPDIR"
+          exe="$PWD/dist/WeekNumber.app/Contents/MacOS/WeekNumber"
+          WEEKNUMBER_OPEN=calendar "$exe" &
+          first=$!
+          sleep 8
+          kill -0 $first || { echo "WeekNumber exited after start"; exit 1; }
+          test -z "$(pgrep -P $first)" || { echo "child processes started"; exit 1; }
+          grep -q '"StartupInitialized": true' "$HOME/Library/Application Support/WeekNumber/settings.json"
+          rss_kb=$(ps -o rss= -p $first | tr -d ' ')
+          "$exe" &
+          second=$!
+          sleep 5
+          if kill -0 $first 2>/dev/null; then echo "the running copy did not hand over"; exit 1; fi
+          kill -0 $second || { echo "the new launch exited"; exit 1; }
+          kill $second
+          {
+            echo "### Smoke test"
+            echo "Started with the calendar open, wrote settings.json, handed over to a second launch."
+            echo ""
+            echo "| Resident memory (KB) | App size (bytes) |"
+            echo "|---|---|"
+            echo "| $rss_kb | $(stat -f %z "$exe") |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Build the disk image
+        run: |
+          stage="$RUNNER_TEMP/dmg"
+          rm -rf "$stage" && mkdir -p "$stage"
+          cp -R dist/WeekNumber.app "$stage/"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname WeekNumber -srcfolder "$stage" -fs HFS+ -format ULMO -ov "dist/$DMG"
+          if [ "$SIGNING_IDENTITY" = "-" ]; then
+            codesign --force --sign - "dist/$DMG"
+          else
+            codesign --force --timestamp --sign "$SIGNING_IDENTITY" "dist/$DMG"
+          fi
+          hdiutil verify "dist/$DMG"
+
+      - name: Notarize (when configured)
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [ "$SIGNING_IDENTITY" = "-" ] || [ -z "$APPLE_ID" ] || [ -z "$APPLE_TEAM_ID" ] || [ -z "$APPLE_APP_PASSWORD" ]; then
+            echo "Notarization not configured: skipped."
+            exit 0
+          fi
+          xcrun notarytool submit "dist/$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "dist/$DMG"
+          xcrun stapler validate "dist/$DMG"
+
+      - name: Checksum
+        run: |
+          cd dist
+          shasum -a 256 "$DMG" | sed 's/  / */' > "$DMG.sha256"
+          cat "$DMG.sha256"
+          size=$(stat -f %z "$DMG")
+          {
+            echo "### $DMG"
+            echo "- Version: $VERSION (Apple silicon)"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Toolchain: $(rustc --version)"
+            echo "- Size: $size bytes"
+            echo "- SHA-256: \`$(cut -d' ' -f1 "$DMG.sha256")\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the disk image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.DMG }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.DMG }}.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+

@@ -1,0 +1,96 @@
+name: test-linux
+
+# Tests the Linux edition on every push to main and every pull request, natively on x64
+# and ARM64: formatting, linting, the unit tests (including a live D-Bus
+# tray test), the dependency audit, then the release AppImage on a
+# headless Xfce desktop with a compositor and a StatusNotifierItem tray
+# (tests/linux/ui-test.sh): install by double-click, tray click, calendar
+# keys, panel menu, Run at Startup, every dialog, single instance,
+# uninstall and memory. Screenshots of every window are attached to the run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  CARGO_DENY_VERSION: "0.20.2"
+
+jobs:
+  test:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the test desktop (Xvfb, Xfce panel and compositor, D-Bus, fonts)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            xvfb xfwm4 xfce4-panel x11-utils x11-xserver-utils xdotool imagemagick feh \
+            dbus dbus-x11 at-spi2-core fonts-dejavu-core fonts-noto-core \
+            squashfs-tools desktop-file-utils python3
+
+      - name: Install the Rust toolchain pinned in rust-toolchain.toml
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal --component clippy,rustfmt --target "$TARGET" --no-self-update
+
+      - name: Format and lint
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --target "$TARGET" --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test --locked --target "$TARGET"
+
+      - name: Dependency audit (cargo-deny, RustSec advisories)
+        if: matrix.arch == 'x64'
+        run: |
+          cargo install cargo-deny --version "$CARGO_DENY_VERSION" --locked
+          cargo deny --locked check advisories bans licenses sources
+
+      - name: Build the AppImage
+        run: |
+          cargo build --release --locked --target "$TARGET"
+          mkdir -p dist
+          packaging/linux/make-appimage.sh "target/$TARGET/release/WeekNumber" "dist/WeekNumber-${{ matrix.arch }}.AppImage"
+
+      - name: UI tests on an Xfce desktop at 200 %
+        run: tests/linux/ui-test.sh "dist/WeekNumber-${{ matrix.arch }}.AppImage" screenshots
+
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshots-linux-${{ matrix.arch }}
+          path: screenshots
+          if-no-files-found: warn
+          retention-days: 14

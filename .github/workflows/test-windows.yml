@@ -1,0 +1,93 @@
+name: test-windows
+
+# Tests the Windows edition on every push to main and every pull request, natively on x64
+# and ARM64: formatting, linting, the unit tests, then the release exe on
+# the runner's desktop (tests/windows/ui-test.ps1): first run, the
+# calendar and its keys, every dialog in both themes, the tray menu,
+# single instance, Run at Startup off by default, and memory. Screenshots
+# of every window are attached to the run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  test:
+    name: Windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    env:
+      TARGET: ${{ matrix.target }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install rustup if the image lacks it
+        if: matrix.arch == 'arm64'
+        run: |
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            $init = Join-Path $env:RUNNER_TEMP "rustup-init.exe"
+            Invoke-WebRequest -Uri "https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe" -OutFile $init
+            & $init -y --default-toolchain none --profile minimal --no-modify-path
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $env:USERPROFILE ".cargo\bin")
+          }
+
+      - name: Install the Rust toolchain pinned in rust-toolchain.toml
+        run: |
+          $channel = (Select-String -Path rust-toolchain.toml -Pattern '^channel\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          if (-not $channel) { throw "No channel in rust-toolchain.toml" }
+          rustup toolchain install $channel --profile minimal --component clippy,rustfmt --target $env:TARGET --no-self-update
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Format and lint
+        run: |
+          cargo fmt --check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo clippy --locked --target $env:TARGET --all-targets -- -D warnings
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Unit tests
+        run: |
+          cargo test --locked --target $env:TARGET
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Build the release exe
+        run: |
+          cargo build --release --locked --target $env:TARGET
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: UI tests on the desktop
+        run: tests/windows/ui-test.ps1 -Exe "target/$env:TARGET/release/WeekNumber.exe" -Shots screenshots
+
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshots-windows-${{ matrix.arch }}
+          path: screenshots
+          if-no-files-found: warn
+          retention-days: 14
