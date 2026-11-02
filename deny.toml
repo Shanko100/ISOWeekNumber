@@ -1,0 +1,46 @@
+# cargo-deny policy, checked by the build workflow before every build:
+# known vulnerabilities (RustSec), unmaintained or yanked crates, licences,
+# duplicate versions, network crates and crate sources.
+
+[graph]
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+]
+all-features = true
+
+[advisories]
+# Every RustSec vulnerability is an error (cargo-deny default); so are
+# unmaintained crates anywhere in the graph and yanked versions.
+unmaintained = "all"
+yanked = "deny"
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "Unicode-3.0"]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+# The app has no network code; keep it that way.
+deny = [
+    { crate = "curl" },
+    { crate = "h2" },
+    { crate = "hyper" },
+    { crate = "mio" },
+    { crate = "native-tls" },
+    { crate = "openssl" },
+    { crate = "reqwest" },
+    { crate = "rustls" },
+    { crate = "socket2" },
+    { crate = "tokio" },
+    { crate = "ureq" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

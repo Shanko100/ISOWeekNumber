@@ -1,0 +1,63 @@
+[package]
+name = "weeknumber"
+version = "1.0.0"
+description = "ISO week number in the Windows notification area (Workplace Edition)"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+license = "MIT"
+
+[[bin]]
+name = "WeekNumber"
+path = "src/main.rs"
+
+[dependencies]
+# Inflate for the embedded, deflate-compressed holiday and map data.
+miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
+
+[build-dependencies]
+# Deflate for the same data at build time.
+miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "=0.62.2"
+default-features = false
+features = [
+    "std",
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Registry",
+    "Win32_System_SystemServices",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_System_WindowsProgramming",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
+incremental = false
+overflow-checks = false
+
+[profile.dev]
+panic = "abort"
