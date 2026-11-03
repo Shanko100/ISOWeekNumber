@@ -18,8 +18,9 @@ name: build-linux
 #
 # Each architecture builds natively and runs formatting, linting, unit
 # tests (including a live D-Bus tray test), dependency auditing, binary and
-# package checks, and a smoke test on a headless X server with a system
-# tray. (UI tests on a full desktop: test-linux.yml.)
+# package checks, a smoke test on a headless X server with a system tray,
+# and smoke tests of every installed package (tests/linux/package-smoke.sh).
+# (UI tests on a full desktop: test-linux.yml.)
 
 on:
   workflow_dispatch:
@@ -66,7 +67,8 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends \
             xvfb stalonetray openbox x11-utils xdotool imagemagick dbus \
-            fonts-dejavu-core fonts-noto-core squashfs-tools flatpak rpm
+            fonts-dejavu-core fonts-noto-core squashfs-tools flatpak rpm \
+            xfce4-panel xfwm4 dbus-x11 x11-xserver-utils feh python3 desktop-file-utils
 
       - name: Install nfpm (builds the .deb and .rpm)
         # From its Go module at a pinned version: the Go toolchain checks
@@ -240,6 +242,20 @@ jobs:
             echo "|---|---|---|---|"
             echo "| $idle_kb | $open_kb | $closed_kb | $(stat -c %s "$exe") |"
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Package smoke tests (installed, on an Xfce desktop)
+        # Each package installed and started as from the menu: no install
+        # prompt, the icon at every size, left click -> calendar, right
+        # click -> menu, Run at Startup (autostart entry; the Flatpak only
+        # through the portal), Exit; the GNOME route (XEmbed tray first,
+        # real button 1 and 3 clicks). The Flatpak gets its runtime from
+        # Flathub here; bubblewrap needs unprivileged user namespaces.
+        env:
+          DISPLAY: ":98"
+          TEST_ROOT: ${{ runner.temp }}/package-smoke
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null 2>&1 || true
+          tests/linux/package-smoke.sh dist "$VERSION" "$ARCH"
 
       - name: Checksum
         run: |

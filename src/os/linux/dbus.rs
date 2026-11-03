@@ -651,6 +651,60 @@ impl Bus {
     }
 }
 
+/// For tests: a private bus (dbus-daemon, where installed) with `policy`
+/// added to an allow-everything default; stopped when dropped.
+#[cfg(test)]
+pub struct TestBus {
+    daemon: std::process::Child,
+    dir: std::path::PathBuf,
+    pub addr: String,
+}
+
+#[cfg(test)]
+impl TestBus {
+    pub fn start(name: &str, policy: &str) -> Option<TestBus> {
+        use std::io::BufRead;
+        let dir = std::env::temp_dir().join(format!("wn-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).ok()?;
+        let config = dir.join("bus.conf");
+        std::fs::write(
+            &config,
+            format!(
+                "<busconfig><type>session</type><listen>unix:path={}/bus</listen>\
+                 <policy context=\"default\"><allow send_destination=\"*\" eavesdrop=\"true\"/>\
+                 <allow eavesdrop=\"true\"/><allow own=\"*\"/>{policy}</policy></busconfig>",
+                dir.display()
+            ),
+        )
+        .ok()?;
+        let mut daemon = std::process::Command::new("dbus-daemon")
+            .arg(format!("--config-file={}", config.display()))
+            .arg("--nofork")
+            .arg("--print-address")
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .ok()?;
+        let mut line = String::new();
+        std::io::BufReader::new(daemon.stdout.take()?)
+            .read_line(&mut line)
+            .ok()?;
+        Some(TestBus {
+            daemon,
+            dir,
+            addr: line.trim().to_string(),
+        })
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestBus {
+    fn drop(&mut self) {
+        let _ = self.daemon.kill();
+        let _ = self.daemon.wait();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

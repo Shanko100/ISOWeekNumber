@@ -188,7 +188,7 @@ run.
 | ⚙️ `build-windows-x64.yml` | `WeekNumber-1.0-windows-x64.exe` | ASLR, DEP, CFG, CET, static CRT, no network DLLs, manifest, smoke test |
 | ⚙️ `build-windows-arm64.yml` | `WeekNumber-1.0-windows-arm64.exe` | ASLR, DEP, CFG, ARM64 machine, static CRT, no network DLLs, manifest, smoke test |
 | ⚙️ `build-macos.yml` | `WeekNumber-1.0-macos-arm64.dmg` | arm64 only, PIE, hardened runtime, signature, system libraries only, smoke test |
-| ⚙️ `build-linux.yaml` | `WeekNumber-1.0-linux-x64` and `-linux-arm64` `.deb`, `.rpm`, `.flatpak`, `.AppImage` | static-pie, no loader or libraries, full RELRO, NX stack, AppImage payload, package contents, licenses and Flatpak permissions, tray smoke test |
+| ⚙️ `build-linux.yaml` | `WeekNumber-1.0-linux-x64` and `-linux-arm64` `.deb`, `.rpm`, `.flatpak`, `.AppImage` | static-pie, no loader or libraries, full RELRO, NX stack, AppImage payload, package contents, licenses and Flatpak permissions, tray smoke test, smoke tests of each installed package (tray clicks, Run at Startup, GNOME route) |
 
 All of them run `cargo fmt`, `clippy` with warnings as errors, the unit tests
 and the cargo-deny dependency audit first. The macOS workflow signs and
