@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026 Shanko100. This file is under the MIT License. -->
+<component type="desktop-application">
+  <id>io.github.shanko100.weeknumber</id>
+  <metadata_license>MIT</metadata_license>
+  <!-- The program: WeekNumber's own code (MIT) and what is built into it,
+       as listed under About -> Legal notices. -->
+  <project_license>MIT AND Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND ISC AND 0BSD AND MIT-CMU AND TCL AND Unicode-3.0 AND LicenseRef-public-domain</project_license>
+  <name>WeekNumber</name>
+  <summary>The ISO week number in the system tray</summary>
+  <developer id="io.github.shanko100">
+    <name>Shanko100</name>
+  </developer>
+  <description>
+    <p>
+      WeekNumber shows the current ISO week number in the panel. A click
+      opens a two-month calendar with week numbers, public holidays for up
+      to two countries and a time-zone clock; a right click opens the menu.
+    </p>
+    <p>
+      It works offline: no network, no accounts, no tracking. A non-profit
+      project.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.shanko100.weeknumber.desktop</launchable>
+  <url type="homepage">https://github.com/Shanko100/ISOWeekNumber</url>
+  <url type="bugtracker">https://github.com/Shanko100/ISOWeekNumber/issues</url>
+  <categories>
+    <category>Utility</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.0" date="2026-11-02"/>
+  </releases>
+</component>

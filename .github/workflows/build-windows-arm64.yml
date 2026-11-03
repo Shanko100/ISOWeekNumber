@@ -11,6 +11,11 @@ name: build-windows-arm64
 
 on:
   workflow_dispatch:
+    inputs:
+      draft_release_id:
+        description: Attach the files to this draft release (its id; empty for none)
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -195,3 +200,23 @@ jobs:
           archive: false
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: Attach to the draft release
+    needs: build
+    if: inputs.draft_release_id != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Attach this run's files (drafts only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT_ID: ${{ inputs.draft_release_id }}
+        run: .github/upload-to-draft.sh "$DRAFT_ID"

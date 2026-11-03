@@ -84,6 +84,10 @@ fn font_dirs() -> Vec<PathBuf> {
         "/usr/share/fonts",
         "/usr/local/share/fonts",
         "/run/current-system/sw/share/X11/fonts",
+        // Inside Flatpak: the host's fonts, as the sandbox exposes them.
+        "/run/host/fonts",
+        "/run/host/local-fonts",
+        "/run/host/user-fonts",
     ] {
         dirs.push(PathBuf::from(d));
     }

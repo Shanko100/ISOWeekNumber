@@ -182,3 +182,8 @@ notices.
 ## Build-only tools
 
 cargo-deny checks dependencies during CI. It is not part of the program.
+<!-- only: linux -->
+nfpm (MIT) builds the .deb and .rpm packages, and Flatpak's own tools
+(LGPL-2.1-or-later) the Flatpak bundle, during CI; neither is part of the
+program or of the packages.
+<!-- end -->

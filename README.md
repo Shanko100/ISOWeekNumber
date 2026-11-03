@@ -80,13 +80,16 @@ and quick copy actions.
 | 🪟 Windows x64 | `WeekNumber-1.0-windows-x64.exe` | Windows 10 and 11, x64 |
 | 🪟 Windows ARM64 | `WeekNumber-1.0-windows-arm64.exe` | Windows 11 on ARM (native) |
 | 🍎 macOS | `WeekNumber-1.0-macos-arm64.dmg` | macOS 13 or later, Apple silicon |
-| 🐧 Linux x64 | `WeekNumber-1.0-linux-x64.AppImage` | Ubuntu, Linux Mint, Fedora, Bazzite, SteamOS, Arch, Debian, openSUSE… |
-| 🐧 Linux ARM64 | `WeekNumber-1.0-linux-arm64.AppImage` | Any ARM64 distribution (Raspberry Pi OS 64-bit, Asahi, …) |
+| 🐧 Linux .deb | `WeekNumber-1.0-linux-x64.deb`, `-arm64.deb` | Ubuntu, Linux Mint, Debian, Raspberry Pi OS 64-bit |
+| 🐧 Linux .rpm | `WeekNumber-1.0-linux-x64.rpm`, `-arm64.rpm` | Fedora, openSUSE |
+| 🐧 Linux Flatpak | `WeekNumber-1.0-linux-x64.flatpak`, `-arm64.flatpak` | Bazzite, SteamOS and other Flatpak systems |
+| 🐧 Linux AppImage | `WeekNumber-1.0-linux-x64.AppImage`, `-arm64.AppImage` | Any distribution (Arch, Asahi, …) |
 
-Every edition is a single program with everything built in: no installer,
-no runtime, no libraries to add. The Linux AppImage needs no FUSE either —
-it is the statically linked program itself, so the same file runs on every
-distribution, including immutable ones like Bazzite and SteamOS.
+Every edition is a single program with everything built in: no runtime, no
+libraries to add. The Linux packages all hold the same statically linked
+program; the .deb and .rpm have no dependencies, and the Flatpak runs in a
+sandbox with no network access. The AppImage needs no FUSE either — it is
+the program itself, so the same file runs on every distribution.
 
 ## 🚀 Install
 
@@ -109,6 +112,21 @@ distribution, including immutable ones like Bazzite and SteamOS.
    certificate are signed ad hoc).
 
 ### 🐧 Linux
+
+Pick the file for your system (`-arm64` for ARM64) and double-click it:
+
+- **Ubuntu, Linux Mint, Debian:** `WeekNumber-1.0-linux-x64.deb` opens in
+  App Center or Software Manager; choose **Install**.
+- **Fedora, openSUSE:** `WeekNumber-1.0-linux-x64.rpm` opens in Software,
+  Discover or YaST; choose **Install**.
+- **Bazzite, SteamOS (desktop mode) and other Flatpak systems:**
+  `WeekNumber-1.0-linux-x64.flatpak` opens in Discover or your Flatpak app
+  store; choose **Install**. Flatpak fetches the Freedesktop runtime from
+  Flathub the first time.
+
+Then start **WeekNumber** from the applications menu.
+
+**AppImage** (any other distribution, such as Arch):
 
 1. Download `WeekNumber-1.0-linux-x64.AppImage` (or `-arm64`).
 2. Allow it to run: right-click → **Properties → Permissions → Allow
@@ -170,7 +188,7 @@ run.
 | ⚙️ `build-windows-x64.yml` | `WeekNumber-1.0-windows-x64.exe` | ASLR, DEP, CFG, CET, static CRT, no network DLLs, manifest, smoke test |
 | ⚙️ `build-windows-arm64.yml` | `WeekNumber-1.0-windows-arm64.exe` | ASLR, DEP, CFG, ARM64 machine, static CRT, no network DLLs, manifest, smoke test |
 | ⚙️ `build-macos.yml` | `WeekNumber-1.0-macos-arm64.dmg` | arm64 only, PIE, hardened runtime, signature, system libraries only, smoke test |
-| ⚙️ `build-linux.yaml` | `WeekNumber-1.0-linux-x64.AppImage`, `-linux-arm64.AppImage` | static-pie, no loader or libraries, full RELRO, NX stack, AppImage payload, tray smoke test |
+| ⚙️ `build-linux.yaml` | `WeekNumber-1.0-linux-x64` and `-linux-arm64` `.deb`, `.rpm`, `.flatpak`, `.AppImage` | static-pie, no loader or libraries, full RELRO, NX stack, AppImage payload, package contents, licenses and Flatpak permissions, tray smoke test |
 
 All of them run `cargo fmt`, `clippy` with warnings as errors, the unit tests
 and the cargo-deny dependency audit first. The macOS workflow signs and
@@ -199,7 +217,7 @@ The Rust toolchain is pinned in `rust-toolchain.toml`.
 ├── assets/              📦 Icons, holidays, time zones, macOS Info.plist
 ├── docs/                📚 Administration guide and screenshots
 ├── legal/               ⚖️ Legal notices and licenses
-├── packaging/linux/     🐧 AppImage assembly
+├── packaging/linux/     🐧 .deb, .rpm, Flatpak and AppImage assembly
 ├── src/
 │   ├── os/              🧩 Platform layer: win32, macos, linux, shared unix
 │   ├── startup/         🚀 Run at Startup per platform
@@ -226,7 +244,7 @@ build workflow checks the binary's hardening before it is published.
 
 ## ⚖️ Legal
 
-WeekNumber is a not-for-profit project under the MIT License. Each edition
+WeekNumber is a non-profit project under the MIT License. Each edition
 shows only the notices and licenses of what it contains, under
 **About → Legal notices**.
 

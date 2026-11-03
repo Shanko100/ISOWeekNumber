@@ -214,7 +214,7 @@ mod tests {
         assert!(t.starts_with("WeekNumber Workplace Edition"));
         for needle in [
             "Legal notices",
-            "A not-for-profit project",
+            "A non-profit project",
             "WeekNumber: LICENSE",
             "Third-party notices",
             "Build environment",
@@ -247,6 +247,7 @@ mod tests {
                     "licenses/windows-rs-MIT.txt",
                     "licenses/musl-MIT.txt",
                     "Linus Torvalds",
+                    "Linux packages",
                     "<!--",
                 ],
             )
@@ -256,6 +257,8 @@ mod tests {
                     "for Linux",
                     "Linus Torvalds",
                     "licenses/Rust-standard-library-unix.txt",
+                    "Linux packages",
+                    "org.freedesktop.Platform",
                 ],
                 &[
                     "licenses/windows-rs-MIT.txt",

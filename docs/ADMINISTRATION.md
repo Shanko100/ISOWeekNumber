@@ -39,6 +39,18 @@ Login items can be managed centrally with the
 
 ## Linux
 
+The .deb and .rpm packages install the same static executable as
+`/usr/bin/weeknumber`, with the menu entry, icons, AppStream description and
+legal notices, and have no dependencies or install scripts; deploy them
+with the distribution's package tools (`apt install ./WeekNumber-1.0-linux-x64.deb`,
+`dnf install ./WeekNumber-1.0-linux-x64.rpm`). The Flatpak bundle
+(`flatpak install WeekNumber-1.0-linux-x64.flatpak`) runs on the
+Freedesktop runtime from Flathub, in a sandbox limited to the X11 display
+and the tray watcher on the session bus; it keeps its settings in
+`~/.var/app/io.github.shanko100.weeknumber/config/weeknumber` and starts at
+login through the desktop's Background portal. Packaged copies are never
+offered the per-user install.
+
 The AppImage is the static executable itself with a small payload (menu
 entry and icons) appended; it needs no FUSE, no libraries and no runtime,
 and runs on any distribution with an X11 session or XWayland. For all

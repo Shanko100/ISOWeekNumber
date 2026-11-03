@@ -32,6 +32,9 @@ pub enum Value {
     Array(String, Vec<Value>),
     Struct(Vec<Value>),
     Dict(Box<Value>, Box<Value>),
+    /// A byte array ("ay") held as bytes: icon pixels, sent as they are
+    /// instead of one Value per byte.
+    Bytes(Vec<u8>),
 }
 
 impl Value {
@@ -49,6 +52,7 @@ impl Value {
             Value::Array(e, _) => format!("a{e}"),
             Value::Struct(v) => format!("({})", v.iter().map(Value::signature).collect::<String>()),
             Value::Dict(k, v) => format!("{{{}{}}}", k.signature(), v.signature()),
+            Value::Bytes(_) => "ay".into(),
         }
     }
 
@@ -146,6 +150,11 @@ pub fn write(buf: &mut Vec<u8>, v: &Value) {
             pad(buf, 8);
             write(buf, k);
             write(buf, val);
+        }
+        Value::Bytes(b) => {
+            pad(buf, 4);
+            buf.extend_from_slice(&(b.len() as u32).to_le_bytes());
+            buf.extend_from_slice(b);
         }
     }
 }
@@ -688,6 +697,16 @@ mod tests {
         assert_eq!(back.serial, 7);
         assert_eq!(back.member.as_deref(), Some("M"));
         assert_eq!(back.body, m.body);
+        // Bytes go out exactly as an array of Byte values does.
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        write(
+            &mut a,
+            &Value::Array("y".into(), vec![Value::Byte(1), Value::Byte(2)]),
+        );
+        write(&mut b, &Value::Bytes(vec![1, 2]));
+        assert_eq!(a, b);
+        assert_eq!(Value::Bytes(Vec::new()).signature(), "ay");
         assert!(
             Message::decode(&bytes[..bytes.len() - 1])
                 .unwrap()

@@ -102,15 +102,25 @@ impl Sni {
     }
 
     fn start_on(mut bus: Bus) -> Option<Sni> {
-        let name = format!("org.kde.StatusNotifierItem-{}-1", std::process::id());
+        let wanted = format!("org.kde.StatusNotifierItem-{}-1", std::process::id());
         let req = Message::call(
             "org.freedesktop.DBus",
             "/org/freedesktop/DBus",
             "org.freedesktop.DBus",
             "RequestName",
-            vec![Value::Str(name.clone()), Value::U32(4)],
+            vec![Value::Str(wanted.clone()), Value::U32(4)],
         );
-        bus.call(&req)?;
+        // 1: primary owner, 4: already the owner. A sandbox (Flatpak) may
+        // not own the name: the item then registers under the connection's
+        // own unique name, which the watchers accept as well.
+        let owned = bus
+            .call(&req)
+            .is_some_and(|r| matches!(r.body.first(), Some(Value::U32(1 | 4))));
+        let name = if owned {
+            wanted
+        } else {
+            bus.unique_name.clone()
+        };
         let rule = format!(
             "type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',\
              member='NameOwnerChanged',arg0='{WATCHER}'"
@@ -204,7 +214,7 @@ impl Sni {
                     Value::Struct(vec![
                         Value::I32(*w),
                         Value::I32(*h),
-                        Value::Array("y".into(), d.iter().map(|&b| Value::Byte(b)).collect()),
+                        Value::Bytes(d.clone()),
                     ])
                 })
                 .collect(),

@@ -360,6 +360,12 @@ impl App {
                     }
                     // That menu is about to open: bring its check marks up to date.
                     TRAY_MENU_REFRESH => later(publish_tray_menu),
+                    // The Linux backend found (or changed) the tray: render
+                    // the icon for it.
+                    TRAY_ICON_REFRESH => {
+                        self.icon_key = None;
+                        self.refresh_tray();
+                    }
                     _ => {}
                 }
                 Some(0)
@@ -439,6 +445,9 @@ impl App {
 /// WM_TRAY lparam from the macOS and Linux backends: the menu they draw
 /// natively is about to open.
 const TRAY_MENU_REFRESH: u32 = 0x7F00;
+/// WM_TRAY lparam from the Linux backend: the icon was rendered for another
+/// kind of tray than the one now hosting it.
+const TRAY_ICON_REFRESH: u32 = 0x7F01;
 
 /// The tray menu: (command, label, check state for the toggles); command 0
 /// is a separator.
