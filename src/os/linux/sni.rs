@@ -102,15 +102,25 @@ impl Sni {
     }
 
     fn start_on(mut bus: Bus) -> Option<Sni> {
-        let name = format!("org.kde.StatusNotifierItem-{}-1", std::process::id());
+        let wanted = format!("org.kde.StatusNotifierItem-{}-1", std::process::id());
         let req = Message::call(
             "org.freedesktop.DBus",
             "/org/freedesktop/DBus",
             "org.freedesktop.DBus",
             "RequestName",
-            vec![Value::Str(name.clone()), Value::U32(4)],
+            vec![Value::Str(wanted.clone()), Value::U32(4)],
         );
-        bus.call(&req)?;
+        // 1: primary owner, 4: already the owner. A sandbox (Flatpak) may
+        // not own the name: the item then registers under the connection's
+        // own unique name, which the watchers accept as well.
+        let owned = bus
+            .call(&req)
+            .is_some_and(|r| matches!(r.body.first(), Some(Value::U32(1 | 4))));
+        let name = if owned {
+            wanted
+        } else {
+            bus.unique_name.clone()
+        };
         let rule = format!(
             "type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',\
              member='NameOwnerChanged',arg0='{WATCHER}'"
@@ -204,7 +214,7 @@ impl Sni {
                     Value::Struct(vec![
                         Value::I32(*w),
                         Value::I32(*h),
-                        Value::Array("y".into(), d.iter().map(|&b| Value::Byte(b)).collect()),
+                        Value::Bytes(d.clone()),
                     ])
                 })
                 .collect(),
@@ -530,6 +540,47 @@ mod tests {
             Value::Array("v".into(), Vec::new()),
         ]);
         assert_eq!(v.signature(), "(ia{sv}av)");
+    }
+
+    /// A sandbox that may not own the item's well-known name (Flatpak): the
+    /// item registers under its unique connection name instead.
+    #[test]
+    fn sandboxed_item_registers_its_unique_name() {
+        let deny = format!(
+            "<deny own=\"org.kde.StatusNotifierItem-{}-1\"/>",
+            std::process::id()
+        );
+        let Some(tb) = super::super::dbus::TestBus::start("sni-sandbox", &deny) else {
+            return; // no dbus-daemon here
+        };
+        let mut watcher = Bus::connect(&tb.addr).expect("watcher connects");
+        let own = Message::call(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "RequestName",
+            vec![Value::Str(WATCHER.into()), Value::U32(4)],
+        );
+        assert!(watcher.call(&own).is_some());
+        let th = std::thread::spawn(move || {
+            for _ in 0..200 {
+                for m in watcher.poll() {
+                    if m.member.as_deref() == Some("RegisterStatusNotifierItem") {
+                        watcher.send(&Message::reply_to(&m, Vec::new()));
+                        return m.body.first().and_then(Value::as_str).map(str::to_string);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            None
+        });
+        let item = Bus::connect(&tb.addr).unwrap();
+        let unique = item.unique_name.clone();
+        let sni = Sni::start_on(item).expect("item starts");
+        assert!(sni.registered());
+        assert!(unique.starts_with(':'));
+        assert_eq!(th.join().unwrap().as_deref(), Some(unique.as_str()));
+        assert_eq!(sni.name, unique);
     }
 
     /// Against a private bus (dbus-daemon, where installed): a fake

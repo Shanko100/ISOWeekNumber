@@ -14,6 +14,11 @@ const WIDTH_PX: f64 = 520.0;
 const HEIGHT_PX: f64 = 300.0;
 const MARGIN_PX: f64 = 28.0;
 const LIST_ROWS: usize = 16;
+/// The small note beside Save: when the bundled holiday data was made
+/// (build.rs takes it from the data's metadata).
+const UPDATED: &str = concat!("Holidays last updated on ", env!("WN_HOLIDAYS_UPDATED"));
+/// Point size of that note.
+const NOTE_PT: f64 = 9.0;
 
 #[derive(Default, Clone, Copy)]
 struct Layout {
@@ -22,6 +27,7 @@ struct Layout {
     swatch: [Rect; 2],
     label: [(i32, i32); 2],
     combo: [Rect; 2],
+    note: (i32, i32),
 }
 
 pub struct HolidayDialog {
@@ -92,6 +98,11 @@ impl HolidayDialog {
         }
         let (pw, ph) = self.save.size(&mut b.m);
         self.save.rect = rect(margin + inner_w - pw, h - pady - ph, pw, ph);
+        let note_h = b.m.font(NOTE_PT, false).metrics().linespace() + 2 + 2 * bd;
+        self.l.note = (
+            margin + bd + 1,
+            self.save.rect.top + (ph - note_h) / 2 + 1 + bd,
+        );
     }
 
     pub fn hwnd(&self) -> HWND {
@@ -198,6 +209,14 @@ impl HolidayDialog {
                 self.focused == Some(i),
             );
         }
+        text_at(
+            &mut s,
+            self.l.note.0,
+            self.l.note.1,
+            UPDATED,
+            self.base.m.font(NOTE_PT, false),
+            t.week_num_fg,
+        );
         self.save.draw(&mut s, &mut self.base.m, t);
         self.base.end_paint(s);
     }

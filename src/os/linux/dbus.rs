@@ -32,6 +32,9 @@ pub enum Value {
     Array(String, Vec<Value>),
     Struct(Vec<Value>),
     Dict(Box<Value>, Box<Value>),
+    /// A byte array ("ay") held as bytes: icon pixels, sent as they are
+    /// instead of one Value per byte.
+    Bytes(Vec<u8>),
 }
 
 impl Value {
@@ -49,6 +52,7 @@ impl Value {
             Value::Array(e, _) => format!("a{e}"),
             Value::Struct(v) => format!("({})", v.iter().map(Value::signature).collect::<String>()),
             Value::Dict(k, v) => format!("{{{}{}}}", k.signature(), v.signature()),
+            Value::Bytes(_) => "ay".into(),
         }
     }
 
@@ -146,6 +150,11 @@ pub fn write(buf: &mut Vec<u8>, v: &Value) {
             pad(buf, 8);
             write(buf, k);
             write(buf, val);
+        }
+        Value::Bytes(b) => {
+            pad(buf, 4);
+            buf.extend_from_slice(&(b.len() as u32).to_le_bytes());
+            buf.extend_from_slice(b);
         }
     }
 }
@@ -642,6 +651,60 @@ impl Bus {
     }
 }
 
+/// For tests: a private bus (dbus-daemon, where installed) with `policy`
+/// added to an allow-everything default; stopped when dropped.
+#[cfg(test)]
+pub struct TestBus {
+    daemon: std::process::Child,
+    dir: std::path::PathBuf,
+    pub addr: String,
+}
+
+#[cfg(test)]
+impl TestBus {
+    pub fn start(name: &str, policy: &str) -> Option<TestBus> {
+        use std::io::BufRead;
+        let dir = std::env::temp_dir().join(format!("wn-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).ok()?;
+        let config = dir.join("bus.conf");
+        std::fs::write(
+            &config,
+            format!(
+                "<busconfig><type>session</type><listen>unix:path={}/bus</listen>\
+                 <policy context=\"default\"><allow send_destination=\"*\" eavesdrop=\"true\"/>\
+                 <allow eavesdrop=\"true\"/><allow own=\"*\"/>{policy}</policy></busconfig>",
+                dir.display()
+            ),
+        )
+        .ok()?;
+        let mut daemon = std::process::Command::new("dbus-daemon")
+            .arg(format!("--config-file={}", config.display()))
+            .arg("--nofork")
+            .arg("--print-address")
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .ok()?;
+        let mut line = String::new();
+        std::io::BufReader::new(daemon.stdout.take()?)
+            .read_line(&mut line)
+            .ok()?;
+        Some(TestBus {
+            daemon,
+            dir,
+            addr: line.trim().to_string(),
+        })
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestBus {
+    fn drop(&mut self) {
+        let _ = self.daemon.kill();
+        let _ = self.daemon.wait();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -688,6 +751,16 @@ mod tests {
         assert_eq!(back.serial, 7);
         assert_eq!(back.member.as_deref(), Some("M"));
         assert_eq!(back.body, m.body);
+        // Bytes go out exactly as an array of Byte values does.
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        write(
+            &mut a,
+            &Value::Array("y".into(), vec![Value::Byte(1), Value::Byte(2)]),
+        );
+        write(&mut b, &Value::Bytes(vec![1, 2]));
+        assert_eq!(a, b);
+        assert_eq!(Value::Bytes(Vec::new()).signature(), "ay");
         assert!(
             Message::decode(&bytes[..bytes.len() - 1])
                 .unwrap()

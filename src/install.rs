@@ -207,9 +207,23 @@ fn declined_marker() -> PathBuf {
 /// Whether to offer installing: the app runs from a place it can't start
 /// at login from (Downloads, the desktop, a temporary folder...), as a
 /// double-clicked download does. Copies an administrator or an AppImage
-/// manager put somewhere safe are left alone.
+/// manager put somewhere safe are left alone, and so are the ones a
+/// package installed: the .deb and .rpm in /usr/bin, and the Flatpak.
 pub fn worth_installing() -> bool {
-    !is_installed_copy() && startup::location_problem(this_exe().as_deref()).is_some()
+    if startup::in_flatpak() {
+        return false;
+    }
+    let exe = this_exe();
+    !exe.as_deref().is_some_and(from_package)
+        && !is_installed_copy()
+        && startup::location_problem(exe.as_deref()).is_some()
+}
+
+/// Where the .deb and .rpm packages put the program.
+const PACKAGE_BIN: &str = "/usr/bin";
+
+fn from_package(exe: &Path) -> bool {
+    exe.parent() == Some(Path::new(PACKAGE_BIN))
 }
 
 /// Start-up: offer to install, unless the user said "Not Now" before or the
@@ -474,6 +488,15 @@ mod tests {
         assert_eq!(plain.len(), 1640);
         assert_eq!(appimage_offset(&plain), None);
         assert_eq!(&plain[8..11], &[0, 0, 0]);
+    }
+
+    #[test]
+    fn packaged_copies_are_not_offered_an_install() {
+        assert!(from_package(Path::new("/usr/bin/weeknumber")));
+        assert!(!from_package(Path::new("/usr/bin/sub/weeknumber")));
+        assert!(!from_package(Path::new(
+            "/home/u/Downloads/WeekNumber.AppImage"
+        )));
     }
 
     #[test]

@@ -12,10 +12,12 @@ mod edit;
 pub mod font;
 mod frame;
 mod msgbox;
+mod portal;
 mod sni;
 mod x11;
 
 pub use font::Font;
+pub use portal::request_autostart;
 
 use super::unix::{self, HWND, Kind, core, wm};
 pub use super::unix::{MonitorGeom, Rect, is_null};
@@ -1213,14 +1215,22 @@ pub fn tray_icon_sizes(size: usize) -> Vec<usize> {
     }
 }
 
-/// The font size for the week number in a `size` px tray icon. Panels show
-/// icons at 16-24 px (more on HiDPI) beside their own text, so the number
-/// is set at the size of panel text -- its digits as tall as the clock's
-/// -- whatever icon size the panel picks, instead of filling the icon as
-/// on Windows' 16 px tray.
+/// The font size for the week number in a `size` px tray icon. An XEmbed
+/// tray shows the icon at the size it gives the icon window, 16-24 px (more
+/// on HiDPI) beside its own text, so there the number is set at the size of
+/// panel text -- its digits as tall as the clock's -- instead of filling
+/// the icon as on Windows' 16 px tray.
+///
+/// A D-Bus panel (StatusNotifierItem) picks one of the frames and scales it
+/// to its own icon size, which the app is not told: there the number fills
+/// each frame, as native tray icons fill theirs, so it keeps its proportion
+/// whatever frame the panel picks and however it scales it.
 pub fn tray_text_height(size: usize) -> usize {
-    let dpi = with(|l| l.dpi).unwrap_or(96);
-    text_height_for(size, dpi)
+    match with(|l| (matches!(l.tray, TrayHost::Sni(_)), l.dpi)) {
+        Some((true, _)) => size,
+        Some((false, dpi)) => text_height_for(size, dpi),
+        None => text_height_for(size, 96),
+    }
 }
 
 fn text_height_for(size: usize, dpi: u32) -> usize {
@@ -1239,6 +1249,38 @@ fn tray_icon_size() -> i32 {
     })
     .unwrap_or(22)
     .clamp(16, 128)
+}
+
+/// Whether to dock in the XEmbed tray before offering a D-Bus item: on
+/// GNOME Shell. Its AppIndicator extension opens a D-Bus item's menu on a
+/// left click and sends Activate only on a double click, and never sends
+/// ContextMenu; its legacy tray, which also shows XEmbed icons, hands each
+/// click to the icon as it is. Docked there, a left click opens the
+/// calendar and a right click the menu, as on every other desktop. Where
+/// that tray is off, the D-Bus item is used as before.
+fn prefers_xembed() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| is_gnome_shell(&d))
+}
+
+/// XDG_CURRENT_DESKTOP of GNOME Shell sessions: "GNOME", "ubuntu:GNOME",
+/// "GNOME-Classic:GNOME" -- not desktops that only name GNOME as their
+/// base ("Budgie:GNOME", "GNOME-Flashback:GNOME", "Pantheon").
+fn is_gnome_shell(desktop: &str) -> bool {
+    let names: Vec<&str> = desktop.split(':').map(str::trim).collect();
+    names.iter().any(|n| n.eq_ignore_ascii_case("GNOME"))
+        && !names.iter().any(|n| {
+            [
+                "Budgie",
+                "GNOME-Flashback",
+                "Pantheon",
+                "Unity",
+                "X-Cinnamon",
+                "MATE",
+                "XFCE",
+            ]
+            .iter()
+            .any(|o| n.eq_ignore_ascii_case(o))
+        })
 }
 
 /// The tray menu as the panel draws it (D-Bus menus); ids are tray
@@ -1293,8 +1335,12 @@ pub fn tray_icon(_h: HWND, op: TrayOp, icon: Option<&Icon>, tip: &str) -> bool {
 }
 
 impl Lx {
-    /// StatusNotifierItem when a panel hosts it, else the XEmbed tray.
+    /// StatusNotifierItem when a panel hosts it, else the XEmbed tray (on
+    /// GNOME Shell the XEmbed tray first, see prefers_xembed).
     fn attach_tray(&mut self) {
+        if prefers_xembed() && self.dock_xembed() {
+            return;
+        }
         if let Some(s) = sni::Sni::start() {
             let mut s = Box::new(s);
             if s.registered() {
@@ -1405,6 +1451,18 @@ impl Lx {
     fn update_tray(&mut self) {
         let tip = self.tray_tip.clone();
         let icon = self.tray_icon.clone();
+        // An icon rendered for another kind of tray (before the tray was
+        // found, or before it changed): the app renders it anew, at every
+        // size a D-Bus panel picks from or at the XEmbed icon's own size.
+        let frames = icon.as_ref().map_or(0, |i| i.frames.len());
+        let stale = match &self.tray {
+            TrayHost::Sni(s) => s.registered() && frames == 1,
+            TrayHost::Xembed { .. } => frames > 1,
+            TrayHost::None => false,
+        };
+        if stale && let Some(h) = self.tray_hwnd {
+            core::post(h, WM_TRAY, 0, TRAY_ICON_REFRESH as isize);
+        }
         match &mut self.tray {
             TrayHost::Sni(s) if s.registered() => {
                 if let Some(i) = &icon {
@@ -1734,6 +1792,8 @@ fn inset_of(h: HWND) -> i32 {
 
 /// WM_TRAY lparam: the panel is about to show the menu.
 pub const TRAY_MENU_REFRESH: u32 = 0x7F00;
+/// WM_TRAY lparam: render the icon anew for the tray now hosting it.
+pub const TRAY_ICON_REFRESH: u32 = 0x7F01;
 
 fn on_x_event(e: Event) {
     match e {
@@ -1796,11 +1856,12 @@ fn on_x_event(e: Event) {
                     core::send(h, wm::WM_CLOSE, 0, 0);
                 }
             } else if kind == manager && data[1] == sel {
-                // A system tray started: dock if nothing hosts the icon yet.
+                // A system tray started: dock if nothing hosts the icon yet
+                // (on GNOME Shell, move there from the D-Bus item).
                 let docked = with(|l| {
                     let none = match &l.tray {
                         TrayHost::None => true,
-                        TrayHost::Sni(s) => !s.registered(),
+                        TrayHost::Sni(s) => !s.registered() || prefers_xembed(),
                         TrayHost::Xembed { .. } => false,
                     };
                     if none && l.dock_xembed() {
@@ -2112,6 +2173,23 @@ mod tests {
         assert_eq!(translate_key(0x23), (0, Some('#')));
         assert_eq!(translate_key(0x0100_20AC), (0, Some('\u{20AC}')));
         assert_eq!(translate_key(0xFF51), (0x25, None));
+    }
+
+    #[test]
+    fn gnome_shell_sessions() {
+        for d in ["GNOME", "ubuntu:GNOME", "GNOME-Classic:GNOME", "gnome"] {
+            assert!(is_gnome_shell(d), "{d}");
+        }
+        for d in [
+            "KDE",
+            "X-Cinnamon",
+            "Budgie:GNOME",
+            "GNOME-Flashback:GNOME",
+            "XFCE",
+            "",
+        ] {
+            assert!(!is_gnome_shell(d), "{d}");
+        }
     }
 
     #[test]

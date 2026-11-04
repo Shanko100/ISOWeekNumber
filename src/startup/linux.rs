@@ -11,10 +11,50 @@
 //!   or in a folder (or file) that other users may write to.
 //! * At launch the entry is repointed only when the program it names no
 //!   longer exists (the app moved), never to another copy.
+//! * In the Flatpak sandbox the autostart folder is out of reach: there the
+//!   Background portal writes the desktop's login entry for the app (and
+//!   asks the user where the desktop wants that), and a marker in the
+//!   settings folder remembers what the portal last confirmed.
 
 use std::path::{Path, PathBuf};
 
 const FILE_NAME: &str = "weeknumber.desktop";
+/// Flatpak: the settings-folder file that says the portal turned login
+/// start on.
+const PORTAL_MARKER: &str = "autostart-portal";
+/// The command the Flatpak's login entry runs (its `command`).
+const FLATPAK_COMMAND: &str = "weeknumber";
+
+/// Whether the app runs inside a Flatpak sandbox.
+pub fn in_flatpak() -> bool {
+    Path::new("/.flatpak-info").is_file()
+}
+
+fn portal_marker() -> PathBuf {
+    crate::os::settings_dir().join(PORTAL_MARKER)
+}
+
+/// Flatpak: Run at Startup through the Background portal.
+fn set_by_portal(enable: bool) -> Result<(), String> {
+    const NO_ANSWER: &str = "WeekNumber could not ask your desktop to start it at login.";
+    let reason = "WeekNumber shows the week number in your panel from the moment you sign in.";
+    let on = crate::os::request_autostart(enable, FLATPAK_COMMAND, reason).ok_or(NO_ANSWER)?;
+    let marker = portal_marker();
+    if on {
+        write_entry(&marker, "1\n").map_err(|_| NO_ANSWER.to_string())?;
+    } else {
+        let _ = std::fs::remove_file(&marker);
+    }
+    if on == enable {
+        Ok(())
+    } else {
+        Err(
+            "Your desktop did not allow WeekNumber to start at login. It can be \
+             allowed in your desktop's settings for apps running in the background."
+                .into(),
+        )
+    }
+}
 
 fn autostart_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")
@@ -127,6 +167,9 @@ fn read_entry() -> Option<Entry> {
 }
 
 pub fn is_enabled() -> bool {
+    if in_flatpak() {
+        return portal_marker().is_file();
+    }
     let Some(exe) = this_exe() else {
         return false;
     };
@@ -311,6 +354,9 @@ fn writable_by_others(exe: &Path) -> Option<PathBuf> {
 /// Turn startup on or off; Err carries the message to show.
 pub fn set(enable: bool) -> Result<(), String> {
     const REFUSED: &str = "WeekNumber could not update its autostart entry.";
+    if in_flatpak() {
+        return set_by_portal(enable);
+    }
     let path = entry_path().ok_or(REFUSED)?;
     if !enable {
         return match std::fs::remove_file(&path) {
@@ -349,6 +395,9 @@ fn write_entry(path: &Path, text: &str) -> std::io::Result<()> {
 
 /// After installing: an enabled entry that starts `from` now starts `to`.
 pub fn repoint(from: &Path, to: &Path) {
+    if in_flatpak() {
+        return;
+    }
     let (Some(entry), Some(path)) = (read_entry(), entry_path()) else {
         return;
     };
@@ -362,6 +411,9 @@ pub fn repoint(from: &Path, to: &Path) {
 
 /// On uninstall: remove the entry if it starts `program`.
 pub fn remove_if_starts(program: &Path) {
+    if in_flatpak() {
+        return;
+    }
     if read_entry().is_some_and(|e| e.program.as_deref().map(Path::new) == Some(program))
         && let Some(path) = entry_path()
     {
@@ -371,12 +423,21 @@ pub fn remove_if_starts(program: &Path) {
 
 /// First run: start with autostart off.
 pub fn disable_on_first_run() {
+    if in_flatpak() {
+        // Nothing was asked of the portal yet: no need to bother it.
+        let _ = std::fs::remove_file(portal_marker());
+        return;
+    }
     let _ = set(false);
 }
 
 /// At launch: repair our entry after the app moved; never repoint it to a
 /// different copy, never re-enable one the desktop disabled.
 pub fn refresh_at_launch() {
+    if in_flatpak() {
+        // The portal's entry starts the Flatpak by its ID: nothing to repair.
+        return;
+    }
     let (Some(exe), Some(entry), Some(path)) = (this_exe(), read_entry(), entry_path()) else {
         return;
     };

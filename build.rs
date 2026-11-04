@@ -60,6 +60,11 @@ fn main() {
     uvar(&mut packed, legal.len() as u64);
     packed.extend_from_slice(&deflate(legal.as_bytes()));
     fs::write(out.join("legal.bin"), packed).expect("write legal.bin");
+    // The same text as a plain file, for the Linux packages' documentation
+    // (packaging/linux/make-packages.sh); it is not part of the program.
+    fs::write(out.join("legal.txt"), &legal).expect("write legal.txt");
+    // "Holidays last updated on ...", from the data's own metadata.
+    println!("cargo:rustc-env=WN_HOLIDAYS_UPDATED={}", holidays_updated());
     fs::write(out.join("holidays.bin"), pack_holidays()).expect("write holidays.bin");
     fs::write(out.join("timezones.bin"), pack_timezones()).expect("write timezones.bin");
 
@@ -239,6 +244,36 @@ fn pack_holidays() -> Vec<u8> {
         out.extend_from_slice(data);
     }
     out
+}
+
+/// The day the holiday data was generated (METADATA.provenance.generated_utc,
+/// "2026-10-17T16:50:56+00:00") as "17 Oct 2026".
+fn holidays_updated() -> String {
+    let text = fs::read_to_string(HOLIDAY_DATA).expect("read holiday data");
+    let first = text.split('\n').next().expect("index line");
+    let index = json::parse(first).expect("index JSON");
+    let stamp = index
+        .get("METADATA")
+        .and_then(|m| m.get("provenance"))
+        .and_then(|p| p.get("generated_utc"))
+        .and_then(Value::as_str)
+        .expect("METADATA.provenance.generated_utc");
+    let date = stamp.get(..10).expect("generated_utc date");
+    let (y, m, d) = (&date[0..4], &date[5..7], &date[8..10]);
+    let (year, month, day): (i32, u32, u32) = (
+        y.parse().expect("year"),
+        m.parse().expect("month"),
+        d.parse().expect("day"),
+    );
+    assert!(
+        &date[4..5] == "-" && &date[7..8] == "-",
+        "generated_utc {stamp}"
+    );
+    day_of_year(year, month, day); // validates the date
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    format!("{day} {} {year}", MONTHS[month as usize - 1])
 }
 
 fn day_of_year(year: i32, month: u32, day: u32) -> u32 {

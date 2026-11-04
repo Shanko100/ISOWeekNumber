@@ -8,9 +8,9 @@ notices apply to every copy of this edition, wherever it is used. In the
 app they open from About -> Legal notices, followed by the full license
 texts.
 
-## A not-for-profit project
+## A non-profit project
 
-WeekNumber is a not-for-profit project, built to take a little friction
+WeekNumber is a non-profit project, built to take a little friction
 out of the working week: the week number is always there when a meeting,
 a deadline or a planning sheet asks for it. It is free of charge and
 always will be. There is no advertising, no subscription, no in-app
@@ -52,6 +52,30 @@ map outlines from Natural Earth.
 <!-- end -->
 Each keeps its own license. They are listed under "Third-party notices",
 and their complete license texts follow.
+
+<!-- only: linux -->
+## Linux packages
+
+WeekNumber for Linux comes as a .deb package (Ubuntu, Linux Mint, Debian),
+an .rpm package (Fedora, openSUSE), a Flatpak bundle (Bazzite, SteamOS and
+other Flatpak systems) and an AppImage. Each holds this same program, with
+everything listed here built in, and, apart from the AppImage, a menu
+entry, the app icon, an AppStream description and these notices, all
+under the MIT License: the .deb in /usr/share/doc/weeknumber, the .rpm in
+/usr/share/licenses/weeknumber, the Flatpak in
+/app/share/licenses/io.github.shanko100.weeknumber. The AppImage holds
+the program, its menu entry and icon; the program shows these notices.
+
+The Flatpak bundle contains no runtime. Flatpak runs the app on the
+Freedesktop runtime (org.freedesktop.Platform, version 25.08), which it
+installs from Flathub on first use, as a separate component under its own
+licenses (mostly free software licenses such as the GPL, LGPL and MIT).
+The runtime is not part of WeekNumber, is not distributed with it, and
+WeekNumber uses none of its libraries: the program is statically linked
+and runs in the sandbox Flatpak sets up. The package managers that
+install these files (APT and dpkg, DNF, zypper and RPM, Flatpak) are not
+part of WeekNumber either.
+<!-- end -->
 
 ## Trademarks
 
@@ -97,6 +121,14 @@ weeknumber.desktop, which your desktop reads at login. Turn Run at Startup
 off and delete that folder to remove them. To show its icon it talks to
 your desktop's panel over the local session bus (D-Bus) or the X11 system
 tray; nothing leaves your computer.
+
+The Flatpak keeps its settings in
+~/.var/app/io.github.shanko100.weeknumber/config/weeknumber, and Run at
+Startup asks your desktop through its Background portal, which adds the
+login entry and may ask you first. The Flatpak sandbox lets the app use
+only the X11 display and the panel's tray service on the session bus
+(org.kde.StatusNotifierWatcher, besides the desktop portals every Flatpak
+may use): no network, no devices and none of your files.
 <!-- end -->
 
 ## Encryption

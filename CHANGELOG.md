@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.0 Linux packages] - 2026-11-03
+
+### Added
+
+- 🐧 Linux packages built from the same static executable, x64 and ARM64:
+  `.deb` (Ubuntu, Linux Mint, Debian), `.rpm` (Fedora, openSUSE) and a
+  Flatpak bundle (Bazzite, SteamOS), each installed with a double-click and
+  shipping the legal notices; the AppImage stays as the fallback.
+- 🐧 The Flatpak starts at login through the Background portal; its
+  sandbox has the X11 display and the tray watcher only, no network.
+- "Holidays last updated on …" under Public Holidays (the date comes from
+  the holiday data) and "Time zones based on system clock" under Time Zone.
+
+### Changed
+
+- 🐧 No install prompt for copies installed by a package (`/usr/bin`) or
+  running in Flatpak.
+- 🐧 GNOME: the icon docks in the AppIndicator extension's tray for X11
+  icons, so a left click opens the calendar and a right click the menu.
+- 🐧 The D-Bus tray icon is sent at every size panels pick from, the week
+  number filling each like a native icon (it looked too small on Fedora).
+- "Non-profit" replaces "not-for-profit" everywhere.
+
 ## [1.0 for every platform, refined] - 2026-10-25
 
 ### Added
@@ -44,7 +67,7 @@
   D-Bus menus) or the XEmbed tray, and XDG autostart
   (`build-linux.yaml`).
 - Smoke tests and binary hardening checks in every build workflow.
-- A not-for-profit statement in the legal notices; each edition shows only
+- A non-profit statement in the legal notices; each edition shows only
   the notices and license texts of what it contains.
 
 ### Changed

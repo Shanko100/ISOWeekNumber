@@ -1,0 +1,99 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: WeekNumber
+Upstream-Contact: https://github.com/Shanko100/ISOWeekNumber/issues
+Source: https://github.com/Shanko100/ISOWeekNumber
+Comment: WeekNumber is a non-profit project. The program is one statically
+ linked executable; the notices and the complete license texts of everything
+ built into it are in /usr/share/doc/weeknumber/LEGAL_NOTICES.txt, the same
+ text the app shows under About -> Legal notices.
+
+Files: *
+Copyright: 2026 Shanko100
+License: MIT
+Comment: The menu entry, the app icon, the AppStream description
+ (usr/share/metainfo) and this packaging.
+
+Files: usr/bin/weeknumber
+Copyright: 2026 Shanko100
+ The Rust Project Developers (Rust standard library)
+ Rich Felker and contributors (musl C library)
+ LLVM Project contributors (libunwind, compiler-rt builtins)
+ 2017 Frommi; 2013-2014 RAD Game Tools and Valve Software; 2010-2014 Rich
+ Geldreich and Tenacious Software LLC (miniz_oxide)
+ Jonas Schievink (adler2)
+ 1997-2011 Secret Labs AB; 1995-2011 Fredrik Lundh and contributors; 2010
+ Jeffrey 'Alex' Clark and contributors (Pillow, ported)
+ The Regents of the University of California, Sun Microsystems, Inc.,
+ Scriptics Corporation, ActiveState Corporation, Apple Inc. and other
+ parties (Tk, ported)
+ 2015 Google Inc. (font-rs, adapted)
+ Vacanza Team and individual contributors; dr-prodigy; ryanss (holidays data)
+ 1991-2026 Unicode, Inc. (Unicode CLDR, Unicode tables)
+License: MIT AND Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND ISC AND 0BSD AND MIT-CMU AND TCL AND Unicode-3.0 AND public-domain
+Comment: Components offered under a choice of licenses are used under MIT
+ (Rust standard library, miniz_oxide) and 0BSD (adler2). Natural Earth map
+ data and the IANA Time Zone Database are in the public domain. Each
+ component's notice and license text is in
+ /usr/share/doc/weeknumber/LEGAL_NOTICES.txt.
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+
+License: Apache-2.0
+ On Debian systems the full text is in /usr/share/common-licenses/Apache-2.0;
+ it is also in /usr/share/doc/weeknumber/LEGAL_NOTICES.txt
+ (licenses/font-rs-Apache-2.0.txt).
+
+License: Apache-2.0 WITH LLVM-exception
+ Apache-2.0 as above, with the LLVM exception, which waives the attribution
+ requirements for object code linked into a program, as libunwind and the
+ compiler-rt builtins are here.
+
+License: BSD-2-Clause
+ The text, with the files it covers, is in
+ /usr/share/doc/weeknumber/LEGAL_NOTICES.txt (licenses/musl-MIT.txt).
+
+License: BSD-3-Clause
+ The text, with the files it covers, is in
+ /usr/share/doc/weeknumber/LEGAL_NOTICES.txt (licenses/musl-MIT.txt).
+
+License: ISC
+ The text, with the files it covers, is in
+ /usr/share/doc/weeknumber/LEGAL_NOTICES.txt (licenses/musl-MIT.txt).
+
+License: 0BSD
+ The text is in /usr/share/doc/weeknumber/LEGAL_NOTICES.txt
+ (licenses/adler2-0BSD.txt).
+
+License: MIT-CMU
+ The text is in /usr/share/doc/weeknumber/LEGAL_NOTICES.txt
+ (licenses/Pillow-MIT-CMU.txt).
+
+License: TCL
+ The text is in /usr/share/doc/weeknumber/LEGAL_NOTICES.txt
+ (licenses/Tk-license.terms).
+
+License: Unicode-3.0
+ The text is in /usr/share/doc/weeknumber/LEGAL_NOTICES.txt
+ (licenses/Unicode-License-v3.txt).
+
+License: public-domain
+ Natural Earth map data and the IANA Time Zone Database files used here are
+ in the public domain; their notices are in
+ /usr/share/doc/weeknumber/LEGAL_NOTICES.txt.

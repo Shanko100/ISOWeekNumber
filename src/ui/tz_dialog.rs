@@ -22,6 +22,10 @@ const SUPERSAMPLE: usize = 2;
 const SEA_MIX: f64 = 0.74;
 const LIST_ROWS: usize = 18;
 const TIMER_CLOCK: usize = 20;
+/// The small note beside Close.
+const NOTE: &str = "Time zones based on system clock";
+/// Point size of that note.
+const NOTE_PT: f64 = 9.0;
 
 #[derive(Default, Clone, Copy)]
 struct Layout {
@@ -32,6 +36,7 @@ struct Layout {
     combo_label: (i32, i32),
     combo: Rect,
     status: (i32, i32),
+    note: (i32, i32),
     /// Requested (width, height) of the switch row, combo row, footer row
     /// and combobox, as Tk's geometry managers would report them.
     rows: [(i32, i32); 4],
@@ -133,7 +138,10 @@ impl TzDialog {
         let combo_row_w = combo_label_w + p10 + combo_req_w;
         let combo_row_h = lab_h.max(g.height);
         let (cw, ch) = self.close.size(m);
-        let footer_w = status_w + cw;
+        let fnote = m.font(NOTE_PT, false);
+        let note_w = fnote.measure(NOTE) + 2 + 2 * bd;
+        let note_h = fnote.metrics().linespace() + 2 + 2 * bd;
+        let footer_w = status_w + p14 + note_w + p10 + cw;
         let footer_h = lab_h.max(ch);
         self.l.rows = [
             (switch_row_w, switch_row_h),
@@ -169,6 +177,10 @@ impl TzDialog {
         y += combo_row_h + p14;
         self.l.status = (x0 + bd + 1, y + (footer_h - lab_h) / 2 + 1 + bd);
         self.close.rect = rect(x0 + inner_w - cw, y + (footer_h - ch) / 2, cw, ch);
+        self.l.note = (
+            self.close.rect.left - p10 - note_w + bd + 1,
+            y + (footer_h - note_h) / 2 + 1 + bd,
+        );
         y += footer_h;
         (inner_w + 2 * pad, y + pad)
     }
@@ -418,6 +430,14 @@ impl TzDialog {
             &status,
             self.base.m.font(11.0, false),
             t.year_fg,
+        );
+        text_at(
+            &mut s,
+            self.l.note.0,
+            self.l.note.1,
+            NOTE,
+            self.base.m.font(NOTE_PT, false),
+            t.week_num_fg,
         );
         self.close.draw(&mut s, &mut self.base.m, t);
         self.base.end_paint(s);

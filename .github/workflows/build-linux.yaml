@@ -1,21 +1,34 @@
 name: build-linux
 
-# Builds WeekNumber-<version>-linux-x64.AppImage and -linux-arm64.AppImage:
-# one statically linked executable (musl, static-pie) that runs on any
-# distribution -- Ubuntu, Linux Mint, Fedora, Bazzite, SteamOS, Arch,
-# Debian, openSUSE and the rest -- with no libraries to install, packed as
-# an AppImage (packaging/linux/make-appimage.sh) that installs itself on a
-# double-click. Start it by hand: Actions -> build-linux -> Run workflow.
-# The AppImages and their SHA-256 are attached to the run as downloads;
-# nothing is committed.
+# Builds WeekNumber for Linux, x64 and ARM64, from one statically linked
+# executable (musl, static-pie) that runs on any distribution with no
+# libraries to install:
+#   WeekNumber-<version>-linux-<arch>.deb      Ubuntu, Linux Mint, Debian
+#   WeekNumber-<version>-linux-<arch>.rpm      Fedora, openSUSE
+#   WeekNumber-<version>-linux-<arch>.flatpak  Bazzite, SteamOS (Flatpak)
+#   WeekNumber-<version>-linux-<arch>.AppImage the fallback (Arch and the rest),
+#                                              which installs itself on a double-click
+# (packaging/linux/make-appimage.sh, make-packages.sh; nfpm builds the .deb
+# and .rpm). Start it by hand: Actions -> build-linux -> Run workflow. The
+# files and their SHA-256 are attached to the run as downloads; nothing is
+# committed. With "Create a draft release" ticked, a new draft release is
+# made from .github/release-notes.md and the files are attached to it; its
+# id (in the run summary) is what the other build workflows take to attach
+# theirs.
 #
 # Each architecture builds natively and runs formatting, linting, unit
-# tests (including a live D-Bus tray test), dependency auditing, binary
-# checks, and a smoke test on a headless X server with a system tray.
+# tests (including a live D-Bus tray test), dependency auditing, binary and
+# package checks, a smoke test on a headless X server with a system tray,
+# and smoke tests of every installed package (tests/linux/package-smoke.sh).
 # (UI tests on a full desktop: test-linux.yml.)
 
 on:
   workflow_dispatch:
+    inputs:
+      draft_release:
+        description: Create a draft release and attach the Linux files
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,6 +37,7 @@ env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: "0"
   CARGO_DENY_VERSION: "0.20.2"
+  NFPM_VERSION: "v2.47.0"
 
 jobs:
   build:
@@ -53,7 +67,20 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends \
             xvfb stalonetray openbox x11-utils xdotool imagemagick dbus \
-            fonts-dejavu-core fonts-noto-core squashfs-tools
+            fonts-dejavu-core fonts-noto-core squashfs-tools flatpak rpm \
+            xfce4-panel xfwm4 dbus-x11 x11-xserver-utils feh python3 desktop-file-utils
+
+      - name: Install nfpm (builds the .deb and .rpm)
+        # From its Go module at a pinned version: the Go toolchain checks
+        # every module it fetches against go.sum and the Go checksum
+        # database. A build tool only; nothing of it goes into the packages.
+        run: |
+          if ! command -v go >/dev/null; then
+            sudo apt-get install -y -q --no-install-recommends golang-go
+          fi
+          GOTOOLCHAIN=auto GOBIN="$RUNNER_TEMP/bin" go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@$NFPM_VERSION"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/nfpm" --version
 
       - name: Install the Rust toolchain pinned in rust-toolchain.toml
         run: |
@@ -93,6 +120,16 @@ jobs:
           mkdir -p dist
           packaging/linux/make-appimage.sh "target/$TARGET/release/WeekNumber" "dist/$out"
 
+      - name: Build the .deb, .rpm and Flatpak bundle
+        # From the same executable, with the Legal notices text build.rs
+        # composed for it, so the packages ship what the app shows.
+        run: |
+          legal=$(ls -t target/"$TARGET"/release/build/weeknumber-*/out/legal.txt | head -1)
+          test -s "$legal"
+          packaging/linux/make-packages.sh "target/$TARGET/release/WeekNumber" "$legal" "$VERSION" "$ARCH" dist
+          echo "PKG=WeekNumber-$VERSION-linux-$ARCH" >> "$GITHUB_ENV"
+          echo "LEGAL=$legal" >> "$GITHUB_ENV"
+
       - name: Check the binary
         # Static-pie, no dynamic loader or libraries, full RELRO, a
         # non-executable stack, and no networking or TLS code inside; the
@@ -118,6 +155,41 @@ jobs:
             check "AppImage type 2 magic" '[ "$(od -An -c -j8 -N3 "$f" | tr -d " ")" = "AI002" ]'
             check "AppImage payload (SquashFS) at the ELF end" 'unsquashfs -o "$("$f" --appimage-offset)" -l "$f" | grep -q "\.desktop$"'
           } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $fail
+
+      - name: Check the packages
+        # The same program and legal text in each; the license fields;
+        # no dependencies or install scripts; the Flatpak's sandbox: the
+        # X11 display and the tray watcher only, no network.
+        run: |
+          p="dist/$PKG"
+          exe="target/$TARGET/release/WeekNumber"
+          sum=$(sha256sum "$exe" | cut -d' ' -f1)
+          legal_sum=$(sha256sum "$LEGAL" | cut -d' ' -f1)
+          app_id=io.github.shanko100.weeknumber
+          fp_files="$HOME/.local/share/flatpak/app/$app_id/current/active/files"
+          flatpak install --user -y --noninteractive --no-deps --bundle "$p.flatpak" >/dev/null
+          perms=$(flatpak info --user --show-permissions "$app_id")
+          expected=$(printf '[Context]\nsockets=x11;\n\n[Session Bus Policy]\norg.kde.StatusNotifierWatcher=talk')
+          deb_file() { dpkg-deb --fsys-tarfile "$p.deb" | tar -xO "./$1"; }
+          check() { if eval "$2"; then echo "| $1 | yes |"; else echo "| $1 | NO |"; fail=1; fi; }
+          fail=0
+          {
+            echo "### Package checks ($PKG)"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            check ".deb: weeknumber $VERSION, no dependencies" '[ "$(dpkg-deb -f "$p.deb" Package)" = weeknumber ] && dpkg-deb -f "$p.deb" Version | grep -q "^$VERSION-" && [ -z "$(dpkg-deb -f "$p.deb" Depends Pre-Depends Recommends)" ]'
+            check ".deb: no install scripts" '! dpkg-deb --ctrl-tarfile "$p.deb" | tar -t | grep -qE "inst|rm"'
+            check ".deb: the program" '[ "$(deb_file usr/bin/weeknumber | sha256sum | cut -d" " -f1)" = "$sum" ]'
+            check ".deb: copyright file and legal notices" 'deb_file usr/share/doc/weeknumber/copyright | grep -q "^License: MIT AND" && [ "$(deb_file usr/share/doc/weeknumber/LEGAL_NOTICES.txt | sha256sum | cut -d" " -f1)" = "$legal_sum" ]'
+            check ".rpm: weeknumber $VERSION, License field" '[ "$(rpm -qp --qf "%{NAME} %{VERSION}" "$p.rpm")" = "weeknumber $VERSION" ] && rpm -qp --qf "%{LICENSE}" "$p.rpm" | grep -q "^MIT AND"'
+            check ".rpm: no dependencies or install scripts" '! rpm -qpR "$p.rpm" | grep -qv "^rpmlib(" && [ -z "$(rpm -qp --scripts "$p.rpm")" ]'
+            check ".rpm: the program and the legal notices" 'rpm -qp --dump "$p.rpm" | grep -q "^/usr/bin/weeknumber [0-9]* [0-9]* $sum " && rpm -qp --dump "$p.rpm" | grep -q "^/usr/share/licenses/weeknumber/LEGAL_NOTICES.txt [0-9]* [0-9]* $legal_sum " && rpm -qpL "$p.rpm" | grep -q /LICENSE'
+            check "Flatpak: the program and the legal notices" '[ "$(sha256sum "$fp_files/bin/weeknumber" | cut -d" " -f1)" = "$sum" ] && cmp -s "$LEGAL" "$fp_files/share/licenses/$app_id/LEGAL_NOTICES.txt"'
+            check "Flatpak: X11 and the tray watcher only, no network" '[ "$perms" = "$expected" ]'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          flatpak uninstall --user -y --noninteractive "$app_id" >/dev/null
           exit $fail
 
       - name: Smoke test (headless desktop with a system tray)
@@ -171,11 +243,27 @@ jobs:
             echo "| $idle_kb | $open_kb | $closed_kb | $(stat -c %s "$exe") |"
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      - name: Package smoke tests (installed, on an Xfce desktop)
+        # Each package installed and started as from the menu: no install
+        # prompt, the icon at every size, left click -> calendar, right
+        # click -> menu, Run at Startup (autostart entry; the Flatpak only
+        # through the portal), Exit; the GNOME route (XEmbed tray first,
+        # real button 1 and 3 clicks). The Flatpak gets its runtime from
+        # Flathub here; bubblewrap needs unprivileged user namespaces.
+        env:
+          DISPLAY: ":98"
+          TEST_ROOT: ${{ runner.temp }}/package-smoke
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null 2>&1 || true
+          tests/linux/package-smoke.sh dist "$VERSION" "$ARCH"
+
       - name: Checksum
         run: |
           cd dist
-          sha256sum "$OUT" | sed 's/  / */' > "$OUT.sha256"
-          cat "$OUT.sha256"
+          for f in "$OUT" "$PKG.deb" "$PKG.rpm" "$PKG.flatpak"; do
+            sha256sum "$f" | sed 's/  / */' > "$f.sha256"
+            cat "$f.sha256"
+          done
 
       - name: Upload the AppImage
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -193,3 +281,84 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Upload the .deb
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.PKG }}.deb
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the .deb checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.PKG }}.deb.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the .rpm
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.PKG }}.rpm
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the .rpm checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.PKG }}.rpm.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the Flatpak bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.PKG }}.flatpak
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the Flatpak bundle checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ env.PKG }}.flatpak.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Draft release
+    needs: build
+    if: inputs.draft_release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create a new draft release and attach the Linux files
+        # Always a new draft, never an existing release; the release's
+        # tag is only created when the draft is published.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^pub const APP_VERSION: &str = "\(.*\)";$/\1/p' src/app.rs)
+          test -n "$version"
+          id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="v$version" -f target_commitish="$GITHUB_SHA" \
+            -f name="WeekNumber $version" -F draft=true \
+            -F body=@.github/release-notes.md --jq .id)
+          test -n "$id"
+          .github/upload-to-draft.sh "$id"
+          {
+            echo "### Draft release"
+            echo "New draft \`WeekNumber $version\` (id \`$id\`) with the Linux files."
+            echo "To attach the other editions, run their build workflows with this id."
+          } >> "$GITHUB_STEP_SUMMARY"
