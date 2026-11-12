@@ -120,6 +120,10 @@ struct Lx {
     tray_menu: Vec<sni::MenuItem>,
     /// The size the X tray last gave the icon (kept across re-docking).
     xembed_size: i32,
+    /// GC and colormap for an ARGB tray icon where no compositing manager
+    /// announced itself (made when first needed): the tray composites its
+    /// icons itself (GNOME Shell's tray under Wayland).
+    tray_argb: Option<(u32, u32)>,
     /// Where the panel said its icon was clicked (StatusNotifierItem
     /// Activate), and when: the flyout opens there.
     anchor: Option<(i32, i32, std::time::Instant)>,
@@ -193,22 +197,7 @@ pub fn register_class(handler: core::Handler) -> bool {
     let gc24 = x.create_gc(root);
     let (gc32, argb_colormap) = match (compositing, x.setup.argb) {
         (true, Some(v)) => {
-            let cmap = x.gen_id();
-            let mut b = Vec::new();
-            b.extend_from_slice(&cmap.to_le_bytes());
-            b.extend_from_slice(&root.to_le_bytes());
-            b.extend_from_slice(&v.id.to_le_bytes());
-            x.request(78, 0, &b); // CreateColormap, alloc None
-            // A GC for depth 32 needs a depth-32 drawable: a 1x1 pixmap.
-            let pix = x.gen_id();
-            let mut b = Vec::new();
-            b.extend_from_slice(&pix.to_le_bytes());
-            b.extend_from_slice(&root.to_le_bytes());
-            b.extend_from_slice(&1u16.to_le_bytes());
-            b.extend_from_slice(&1u16.to_le_bytes());
-            x.request(53, 32, &b); // CreatePixmap
-            let gc = x.create_gc(pix);
-            x.request(54, 0, &pix.to_le_bytes()); // FreePixmap
+            let (gc, cmap) = argb_resources(&mut x, v.id);
             (Some(gc), Some(cmap))
         }
         _ => (None, None),
@@ -261,6 +250,7 @@ pub fn register_class(handler: core::Handler) -> bool {
         tray_menu: Vec::new(),
         xembed_size: (22.0 * f64::from(dpi) / 96.0).round() as i32,
         anchor: None,
+        tray_argb: None,
     };
     LX.with(|l| *l.borrow_mut() = Some(lx));
     true
@@ -892,24 +882,17 @@ pub fn cursor_pos() -> (i32, i32) {
 impl Lx {
     /// Where the pop-ups open: the pointer. Under Wayland the X server only
     /// sees the pointer while it is over X windows, so there it is the
-    /// point the panel reported for a click on the tray icon just now (if
-    /// it lies on the panel), else the end of the panel where trays sit.
+    /// point the panel reported for a click on the tray icon just now, or
+    /// the XEmbed icon that was clicked (if it lies on the panel), else the
+    /// end of the panel where trays sit.
     fn pointer(&mut self) -> (i32, i32) {
         let (x, y, _) = self.x.query_pointer();
-        if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        if !on_wayland() {
             return (x, y);
         }
-        let mons = self.x.monitors();
-        let m = mons.iter().find(|m| m.primary).or(mons.first()).copied();
-        let Some(m) = m else { return (x, y) };
-        let mon = Rect {
-            left: m.x,
-            top: m.y,
-            right: m.x + m.w,
-            bottom: m.y + m.h,
+        let Some((mon, work, reach)) = self.primary_panel() else {
+            return (x, y);
         };
-        let work = self.work_area(mon);
-        let reach = (64 * self.dpi / 96) as i32;
         match self.anchor {
             Some((ax, ay, at))
                 if at.elapsed() < std::time::Duration::from_secs(3)
@@ -919,6 +902,27 @@ impl Lx {
             }
             _ => panel_corner(mon, work),
         }
+    }
+
+    /// The primary monitor, its work area, and how far from its edges a
+    /// point still counts as on a panel.
+    fn primary_panel(&mut self) -> Option<(Rect, Rect, i32)> {
+        let mons = self.x.monitors();
+        let m = mons.iter().find(|m| m.primary).or(mons.first()).copied()?;
+        let mon = Rect {
+            left: m.x,
+            top: m.y,
+            right: m.x + m.w,
+            bottom: m.y + m.h,
+        };
+        let work = self.work_area(mon);
+        Some((mon, work, (64 * self.dpi / 96) as i32))
+    }
+
+    /// Whether a screen point lies on a panel of the primary monitor.
+    fn on_a_panel(&mut self, p: (i32, i32)) -> bool {
+        self.primary_panel()
+            .is_some_and(|(mon, work, reach)| on_panel(p, mon, work, reach))
     }
 }
 
@@ -1283,6 +1287,36 @@ fn is_gnome_shell(desktop: &str) -> bool {
         })
 }
 
+/// A colormap for the ARGB visual `visual` and a GC for depth-32 drawables.
+fn argb_resources(x: &mut Conn, visual: u32) -> (u32, u32) {
+    let root = x.setup.root;
+    let cmap = x.gen_id();
+    let mut b = Vec::new();
+    b.extend_from_slice(&cmap.to_le_bytes());
+    b.extend_from_slice(&root.to_le_bytes());
+    b.extend_from_slice(&visual.to_le_bytes());
+    x.request(78, 0, &b); // CreateColormap, alloc None
+    // A GC for depth 32 needs a depth-32 drawable: a 1x1 pixmap.
+    let pix = x.gen_id();
+    let mut b = Vec::new();
+    b.extend_from_slice(&pix.to_le_bytes());
+    b.extend_from_slice(&root.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    x.request(53, 32, &b); // CreatePixmap
+    let gc = x.create_gc(pix);
+    x.request(54, 0, &pix.to_le_bytes()); // FreePixmap
+    (gc, cmap)
+}
+
+/// Whether the session is Wayland (the X server is XWayland). A Flatpak
+/// without the Wayland socket has no WAYLAND_DISPLAY, but still the
+/// session type.
+fn on_wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t.eq_ignore_ascii_case("wayland"))
+}
+
 /// The tray menu as the panel draws it (D-Bus menus); ids are tray
 /// commands, `checked` None for plain items.
 pub fn set_tray_menu(items: Vec<(u32, String, Option<bool>)>) {
@@ -1376,12 +1410,22 @@ impl Lx {
                 d.get(..4)
                     .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             });
-        let argb = self
-            .x
-            .setup
-            .argb
-            .filter(|v| Some(v.id) == tray_visual)
-            .zip(self.argb_colormap);
+        // An ARGB icon wherever the tray asks for one, with or without a
+        // compositing manager: the tray blends it over the panel itself.
+        // (Opaque, the icon would show the colour the tray fills it with:
+        // a black square on GNOME Shell's top bar.)
+        let argb = match self.x.setup.argb.filter(|v| Some(v.id) == tray_visual) {
+            Some(v) => match (self.gc32, self.argb_colormap) {
+                (Some(_), Some(cmap)) => Some((v, cmap)),
+                _ => {
+                    let (_, cmap) = *self
+                        .tray_argb
+                        .get_or_insert_with(|| argb_resources(&mut self.x, v.id));
+                    Some((v, cmap))
+                }
+            },
+            None => None,
+        };
         let events = x11::EV_BUTTON_PRESS
             | x11::EV_BUTTON_RELEASE
             | x11::EV_EXPOSURE
@@ -1530,7 +1574,7 @@ impl Lx {
                 .collect()
         };
         let gc = if depth == 32 {
-            self.gc32
+            self.gc32.or(self.tray_argb.map(|(gc, _)| gc))
         } else {
             Some(self.gc24)
         };
@@ -1938,6 +1982,23 @@ fn on_x_event(e: Event) {
                         3 => wm::WM_RBUTTONUP,
                         _ => return,
                     };
+                    // The pop-ups open at the icon: its centre on the
+                    // screen (GNOME Shell keeps the icon window where it
+                    // shows the icon), or where the click was reported.
+                    with(|l| {
+                        let root = l.x.setup.root;
+                        let centre = match l.tray {
+                            TrayHost::Xembed { xid, size } => {
+                                l.x.translate(xid, root, size / 2, size / 2)
+                            }
+                            _ => None,
+                        };
+                        let at = centre
+                            .into_iter()
+                            .chain([(root_x, root_y)])
+                            .find(|p| l.on_a_panel(*p));
+                        l.anchor = at.map(|(x, y)| (x, y, std::time::Instant::now()));
+                    });
                     core::post(tray, WM_TRAY, 0, m as isize);
                 }
                 return;

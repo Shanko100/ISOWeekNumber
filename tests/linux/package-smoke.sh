@@ -225,6 +225,35 @@ else
   fail "GNOME: left and right clicks (the icon did not dock)"
 fi
 pkill -x weeknumber
+sleep 1
+
+# GNOME Shell under Wayland, as a Flatpak sees it (no WAYLAND_DISPLAY):
+# the tray asks for ARGB icons with no X compositing manager, and hands
+# clicks to the icon window while the X server's pointer is elsewhere.
+owner=$(xwininfo -root -tree | awk '/"stalonetray"/ {print $1; exit}')
+vis=$(xdpyinfo | awk '/visual id:/ {id=$3} /depth:/ && $2 == "32" {print id; exit}')
+xprop -id "$owner" -f _NET_SYSTEM_TRAY_VISUAL 32c -set _NET_SYSTEM_TRAY_VISUAL $((vis))
+env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=GNOME \
+  WEEKNUMBER_NO_INSTALL_PROMPT=1 "$installed" >>"$root/gnome.log" 2>&1 &
+if wait_for '[ -n "$(xembed_icon)" ]' 15; then
+  sleep 1
+  icon=$(xembed_icon)
+  check "GNOME Wayland: the icon is transparent (ARGB), not a black square" \
+    test "$(xwininfo -id "$icon" | awk '/Depth:/ {print $2}')" = 32
+  xdotool mousemove 300 200
+  sleep 0.3
+  xdotool click --window "$icon" 1
+  if wait_for '[ -n "$(calendar)" ]' 8; then
+    read -r cx sw < <(echo "$(xwininfo -id "$(calendar)" | awk '/Absolute upper-left X/ {print $4}') $(xdpyinfo | awk '/dimensions:/ {split($2, d, "x"); print d[1]}')")
+    check "GNOME Wayland: the calendar opens at the icon, not at the pointer" test "$cx" -gt $((sw / 2))
+    close_popups
+  else
+    fail "GNOME Wayland: the calendar opens at the icon, not at the pointer"
+  fi
+else
+  fail "GNOME Wayland: the icon docks"
+fi
+pkill -x weeknumber
 pkill stalonetray
 "$installed" --uninstall >/dev/null
 

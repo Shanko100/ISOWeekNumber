@@ -22,6 +22,9 @@
 - 🐧 The D-Bus tray icon is sent at every size panels pick from, the week
   number filling each like a native icon (it looked too small on Fedora).
 - "Non-profit" replaces "not-for-profit" everywhere.
+- 🐧 GNOME on Wayland (also the Flatpak): the tray icon is transparent
+  instead of sitting on a black square, and the calendar and the menu
+  open at the icon instead of where the X server last saw the pointer.
 
 ## [1.0 for every platform, refined] - 2026-10-25
 
