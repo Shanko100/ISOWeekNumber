@@ -25,6 +25,9 @@
 - 🐧 GNOME on Wayland (also the Flatpak): the tray icon is transparent
   instead of sitting on a black square, and the calendar and the menu
   open at the icon instead of where the X server last saw the pointer.
+- 🍎 The calendar hangs under the menu bar item on whichever display's
+  menu bar it was clicked, instead of at the top left of a second
+  display, or of the screen when it opened without a click.
 
 ## [1.0 for every platform, refined] - 2026-10-25
 

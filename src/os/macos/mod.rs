@@ -331,20 +331,13 @@ fn mouse_location_pt() -> CGPoint {
 }
 
 /// Where the calendar hangs from: the bottom centre of the menu bar item,
-/// as native menu bar pop-overs do. Where the system does not say where the
-/// item is (macOS 26 hosts it elsewhere): the pointer when it is in the
-/// menu bar (a click on the item), else the menu bar's right end, where
-/// menu bar items sit.
+/// as native menu bar pop-overs do, on whichever display's menu bar it
+/// was clicked. Where the system does not say where the item is (macOS 26
+/// hosts it elsewhere): the pointer when it is in a menu bar right of the
+/// app menus (a click on the item), else the right end of the menu bar of the display under the
+/// pointer, where menu bar items sit.
 pub fn tray_anchor() -> Option<(i32, i32)> {
     let list = screens();
-    let main = list.first()?;
-    let h = primary_height(&list);
-    let s = main.scale;
-    let bar = main.frame.size.height - main.visible.size.height - main.visible.origin.y
-        + main.frame.origin.y;
-    let bar = if bar > 0.0 { bar } else { 24.0 };
-    let top = main.frame.origin.y + main.frame.size.height;
-    let to_px = |x: f64, y: f64| ((x * s).round() as i32, ((h - y) * s).round() as i32);
     let item = with(|m| m.status_item).filter(|i| !i.is_null());
     // SAFETY: the status item's button and its window, read on the main
     // thread.
@@ -359,21 +352,69 @@ pub fn tray_anchor() -> Option<(i32, i32)> {
         }
         Some(send0(win, c"frame"))
     });
-    // A real item sits in the menu bar, right of the app menus (an item
-    // the system could not fit reports itself at the far left).
-    if let Some(f) = frame
-        && f.size.width > 0.0
-        && (f.origin.y + f.size.height - top).abs() <= bar
-        && f.origin.x - main.frame.origin.x > main.frame.size.width * 0.3
-    {
-        return Some(to_px(f.origin.x + f.size.width / 2.0, f.origin.y));
+    menu_bar_anchor(&list, frame, mouse_location_pt())
+}
+
+/// The screen holding a point (Cocoa points); the right and top edges
+/// count, as the menu bar's top row and a pointer pressed to the edge
+/// report them.
+fn screen_of(list: &[Screen], p: CGPoint) -> Option<&Screen> {
+    list.iter().find(|s| {
+        let f = s.frame;
+        p.x >= f.origin.x
+            && p.x <= f.origin.x + f.size.width
+            && p.y >= f.origin.y
+            && p.y <= f.origin.y + f.size.height
+    })
+}
+
+/// A screen's top edge and the height of its menu bar (points).
+fn menu_bar(s: &Screen) -> (f64, f64) {
+    let top = s.frame.origin.y + s.frame.size.height;
+    let bar = top - (s.visible.origin.y + s.visible.size.height);
+    (top, if bar > 0.0 { bar } else { 24.0 })
+}
+
+/// tray_anchor's choice, in pixels, from the screens, the status item's
+/// window frame (if any) and the pointer (Cocoa points).
+fn menu_bar_anchor(list: &[Screen], item: Option<CGRect>, pointer: CGPoint) -> Option<(i32, i32)> {
+    let h = primary_height(list);
+    let to_px = |s: &Screen, x: f64, y: f64| {
+        (
+            (x * s.scale).round() as i32,
+            ((h - y) * s.scale).round() as i32,
+        )
+    };
+    // A real item sits in a menu bar, right of the app menus (an item the
+    // system could not fit reports itself at the far left).
+    if let Some(f) = item.filter(|f| f.size.width > 0.0) {
+        let centre = CGPoint {
+            x: f.origin.x + f.size.width / 2.0,
+            y: f.origin.y + f.size.height / 2.0,
+        };
+        if let Some(s) = screen_of(list, centre) {
+            let (top, bar) = menu_bar(s);
+            if (f.origin.y + f.size.height - top).abs() <= bar
+                && f.origin.x - s.frame.origin.x > s.frame.size.width * 0.3
+            {
+                return Some(to_px(s, centre.x, f.origin.y));
+            }
+        }
     }
-    let p = mouse_location_pt();
-    if p.y >= top - bar && p.y <= top {
-        return Some(to_px(p.x, top - bar));
+    // The pointer, where a click on the item leaves it: in a menu bar,
+    // right of the app menus (not a pointer resting in the top left
+    // corner while the calendar opens some other way).
+    let s = screen_of(list, pointer).or(list.first())?;
+    let (top, bar) = menu_bar(s);
+    if pointer.y >= top - bar
+        && pointer.y <= top
+        && pointer.x - s.frame.origin.x > s.frame.size.width * 0.3
+    {
+        return Some(to_px(s, pointer.x, top - bar));
     }
     Some(to_px(
-        main.frame.origin.x + main.frame.size.width - 120.0,
+        s,
+        s.frame.origin.x + s.frame.size.width - 120.0,
         top - bar,
     ))
 }
@@ -2149,6 +2190,53 @@ pub fn login_item_set(enable: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calendar_hangs_under_the_clicked_item() {
+        // A 1512x982 Retina laptop (37 pt menu bar), and a 2560x1440
+        // display to its right (scale 1, 25 pt menu bar), tops aligned.
+        let laptop = Screen {
+            frame: CGRect::new(0.0, 0.0, 1512.0, 982.0),
+            visible: CGRect::new(0.0, 0.0, 1512.0, 945.0),
+            scale: 2.0,
+        };
+        let wide = Screen {
+            frame: CGRect::new(1512.0, -458.0, 2560.0, 1440.0),
+            visible: CGRect::new(1512.0, -458.0, 2560.0, 1415.0),
+            scale: 1.0,
+        };
+        let list = [laptop, wide];
+        let away = CGPoint { x: 700.0, y: 400.0 };
+        // The item on the laptop: under its centre, at the menu bar's foot.
+        let item = CGRect::new(1300.0, 945.0, 30.0, 37.0);
+        assert_eq!(menu_bar_anchor(&list, Some(item), away), Some((2630, 74)));
+        // The item on the second display's menu bar: there, not at the
+        // left edge of that display.
+        let item = CGRect::new(3900.0, 957.0, 30.0, 25.0);
+        assert_eq!(menu_bar_anchor(&list, Some(item), away), Some((3915, 25)));
+        // No usable frame (macOS 26, or an item squeezed to the far left):
+        // the pointer, when it is in that display's menu bar.
+        let squeezed = CGRect::new(0.0, 945.0, 30.0, 37.0);
+        let click = CGPoint {
+            x: 3800.0,
+            y: 970.0,
+        };
+        assert_eq!(
+            menu_bar_anchor(&list, Some(squeezed), click),
+            Some((3800, 25))
+        );
+        assert_eq!(menu_bar_anchor(&list, None, click), Some((3800, 25)));
+        // A pointer resting in the top left corner is no click on the item.
+        let corner = CGPoint { x: 2.0, y: 980.0 };
+        assert_eq!(menu_bar_anchor(&list, None, corner), Some((2784, 74)));
+        // Neither: the right end of the menu bar under the pointer.
+        let below = CGPoint {
+            x: 3000.0,
+            y: 100.0,
+        };
+        assert_eq!(menu_bar_anchor(&list, None, below), Some((3952, 25)));
+        assert_eq!(menu_bar_anchor(&list, None, away), Some((2784, 74)));
+    }
 
     #[test]
     fn matte_recovers_alpha_and_colour() {

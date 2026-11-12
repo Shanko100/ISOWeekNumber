@@ -144,16 +144,30 @@ jobs:
       - name: Smoke test
         # Starts the app as a login session would, with its own home
         # folder: it must stay up as one process with no child processes,
-        # write its settings, open the calendar, and hand over to a second
-        # launch.
+        # write its settings, open the calendar under the menu bar item,
+        # and hand over to a second launch.
         run: |
           export HOME="$RUNNER_TEMP/home" TMPDIR="$RUNNER_TEMP/tmp/"
           mkdir -p "$HOME" "$TMPDIR"
           exe="$PWD/dist/WeekNumber.app/Contents/MacOS/WeekNumber"
+          # The pointer in the top left corner, in the menu bar.
+          python3 -c 'import ctypes as c
+          class P(c.Structure): _fields_ = [("x", c.c_double), ("y", c.c_double)]
+          cg = c.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+          cg.CGWarpMouseCursorPosition.argtypes = [P]
+          cg.CGWarpMouseCursorPosition(P(4, 4))'
           WEEKNUMBER_OPEN=calendar "$exe" &
           first=$!
           sleep 8
           kill -0 $first || { echo "WeekNumber exited after start"; exit 1; }
+          # The calendar hangs under the menu bar item, at the right of the
+          # menu bar -- also when, as here, it opens without a click and
+          # the pointer rests in the top left corner (set before launch).
+          swiftc -O tests/macos/windows.swift -o "$RUNNER_TEMP/windows"
+          sw=$(osascript -l JavaScript -e 'ObjC.import("AppKit"); $.NSScreen.mainScreen.frame.size.width')
+          cal_x=$("$RUNNER_TEMP/windows" $first | awk '$3 > 300 && $3 > $4 {print $1 + int($3 / 2); exit}')
+          echo "calendar centre x: $cal_x of ${sw%.*}"
+          test -n "$cal_x" && test "$cal_x" -gt $((${sw%.*} / 2)) || { echo "the calendar did not open at the menu bar item"; exit 1; }
           test -z "$(pgrep -P $first)" || { echo "child processes started"; exit 1; }
           grep -q '"StartupInitialized": true' "$HOME/Library/Application Support/WeekNumber/settings.json"
           rss_kb=$(ps -o rss= -p $first | tr -d ' ')
@@ -165,7 +179,7 @@ jobs:
           kill $second
           {
             echo "### Smoke test"
-            echo "Started with the calendar open, wrote settings.json, handed over to a second launch."
+            echo "Started with the calendar open at the menu bar item (centre x $cal_x of ${sw%.*}), wrote settings.json, handed over to a second launch."
             echo ""
             echo "| Resident memory (KB) | App size (bytes) |"
             echo "|---|---|"
